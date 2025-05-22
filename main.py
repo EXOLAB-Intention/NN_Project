@@ -5,5 +5,5 @@ from windows.start_window import StartWindow
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = StartWindow()
-    window.show()
+    window.showMaximized()
     sys.exit(app.exec_())

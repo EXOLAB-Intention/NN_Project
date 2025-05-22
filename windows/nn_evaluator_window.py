@@ -1,4 +1,3 @@
-import sys
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QGridLayout, QLabel, QWidget, QSpacerItem, QSizePolicy, QFileDialog, QPushButton, QHBoxLayout, QStackedWidget, QComboBox
 )
@@ -12,20 +11,24 @@ from widgets.header import Header
 
 class NeuralNetworkEvaluator(QMainWindow):
     def __init__(self):
+        """
+        Initialize the Neural Network Evaluator window.
+        This window allows users to evaluate trained neural networks, visualize results, and compare models.
+        """
         super().__init__()
         self.setWindowTitle("Data Monitoring Software")
         self.setGeometry(100, 100, 1200, 800)
 
         # Central widget and layout
         central_widget = QWidget()
-        parent_layout = QVBoxLayout()  # Layout principal parent
-        parent_layout.setContentsMargins(0, 0, 0, 0)  # Pas de marges globales
+        parent_layout = QVBoxLayout()  
+        parent_layout.setContentsMargins(0, 0, 0, 0)  
 
         # Header Section
         header_container = QWidget()
         header_container_layout = QVBoxLayout()
 
-        # Supprimer les marges et espacement pour le conteneur du header
+        # Remove margins and spacing for the header container
         header_container_layout.setContentsMargins(0, 0, 0, 0)
         header_container_layout.setSpacing(0)
 
@@ -34,22 +37,22 @@ class NeuralNetworkEvaluator(QMainWindow):
 
         header_container_layout.addWidget(header)
         header_container.setLayout(header_container_layout)
-        header_container.setContentsMargins(0, 0, 0, 0)  # Pas de marges pour le conteneur
+        header_container.setContentsMargins(0, 0, 0, 0)  
 
-        parent_layout.addWidget(header_container)  # Ajouter le header au parent layout
+        parent_layout.addWidget(header_container)  
 
         # Main Content Section
         main_content_container = QWidget()
         self.main_layout = QVBoxLayout()
-        self.main_layout.setContentsMargins(20, 20, 20, 20)  # Ajouter des marges uniquement au contenu principal
-        self.main_layout.setSpacing(10)  # Espacement entre les composants principaux
+        self.main_layout.setContentsMargins(10, 10, 10, 10)  
+        self.main_layout.setSpacing(10)  
 
         title = QLabel("Neural Network Evaluator")
         title_font = QFont("Arial", 18)
         title_font.setBold(True)
         title.setFont(title_font)
 
-        # Label pour afficher la progression (à droite du titre)
+        # Label to display progress (aligned to the right of the title)
         self.top_right_label = QLabel()
         font = QFont("Arial", 10)
         font.setItalic(True)
@@ -63,7 +66,7 @@ class NeuralNetworkEvaluator(QMainWindow):
             margin: 5px;
         """)
 
-        # Mettre le titre et le label de progression sur la même ligne
+        # Add title and progress label in the same row
         header_layout = QHBoxLayout()
         header_layout.addWidget(title)
         header_layout.addStretch()
@@ -71,9 +74,8 @@ class NeuralNetworkEvaluator(QMainWindow):
 
         self.main_layout.addLayout(header_layout)
 
-        # Mise à jour du label
+        # Update the progress label
         self.update_progress_label(active_step="NN Evaluator", completed_steps=["Dataset Builder", "NN Designer"])
-        ''' FIN HARRY PROGRESS BAR (ALIGNE AU MM NIVEAU QUE LE TITRE) '''
 
         # Menu buttons
         self.add_menu_buttons()
@@ -99,7 +101,7 @@ class NeuralNetworkEvaluator(QMainWindow):
         footer.setStyleSheet("color: gray; font-size: 12px; padding: 10px;")
         self.main_layout.addWidget(footer)
 
-        # Ajouter le contenu principal au conteneur
+        # Add the main content to the container
         main_content_container.setLayout(self.main_layout)
         parent_layout.addWidget(main_content_container)
 
@@ -110,13 +112,14 @@ class NeuralNetworkEvaluator(QMainWindow):
         # Add menu bar
         self.add_menu_bar()
 
-    ''' DEBUT HARRY PROGRESS BAR '''
     def update_progress_label(self, active_step, completed_steps=None):
         """
-        Met à jour le label de progression avec :
-        - les étapes complètes en vert
-        - l’étape active en orange
-        - les autres en style normal
+        Update the progress label to show the current workflow step.
+        Completed steps are displayed in green, the active step in orange, and others in normal style.
+
+        Args:
+            active_step (str): The currently active step.
+            completed_steps (list): List of completed steps.
         """
         steps = ["Dataset Builder", "NN Designer", "NN Evaluator"]
         completed_steps = completed_steps or []
@@ -124,21 +127,19 @@ class NeuralNetworkEvaluator(QMainWindow):
         parts = []
         for step in steps:
             if step in completed_steps:
-                # Vert gras
                 parts.append(f'<span style="color: green; font-weight:bold;">{step}</span>')
             elif step == active_step:
-                # Orange gras
                 parts.append(f'<span style="color: orange; font-weight:bold;">{step}</span>')
             else:
-                # Style normal
                 parts.append(step)
 
         text = " → ".join(parts)
         self.top_right_label.setText(f"Progress Statement : {text}")
-    ''' FIN HARRY PROGRESS BAR '''
 
     def add_menu_buttons(self):
-        """Add the main menu buttons."""
+        """
+        Add the main menu buttons for navigating between different evaluation sections.
+        """
         menu_button_layout = QHBoxLayout()
 
         # Training Overview button
@@ -147,11 +148,13 @@ class NeuralNetworkEvaluator(QMainWindow):
         self.training_overview_button.clicked.connect(lambda: [self.switch_menu(1), self.update_menu_button_styles(0)])
         menu_button_layout.addWidget(self.training_overview_button)
 
+        # Evaluate on Test Set button
         self.evaluate_test_set_button = QPushButton("Evaluate on Test Set")
         self.evaluate_test_set_button.setStyleSheet(self.get_button_style())
         self.evaluate_test_set_button.clicked.connect(lambda: [self.switch_menu(2), self.update_menu_button_styles(1)])
         menu_button_layout.addWidget(self.evaluate_test_set_button)
 
+        # Compare Models button
         self.compare_models_button = QPushButton("Compare Models")
         self.compare_models_button.setStyleSheet(self.get_button_style())
         self.compare_models_button.clicked.connect(lambda: [self.switch_menu(3), self.update_menu_button_styles(2)])
@@ -160,7 +163,9 @@ class NeuralNetworkEvaluator(QMainWindow):
         self.main_layout.addLayout(menu_button_layout)
 
     def add_menu_bar(self):
-        """Add the menu bar with file and options menus."""
+        """
+        Add the menu bar with options for file operations and navigation.
+        """
         menubar = self.menuBar()
 
         # File menu
@@ -203,11 +208,13 @@ class NeuralNetworkEvaluator(QMainWindow):
         exit_action = file_menu.addAction("Exit")
         exit_action.triggered.connect(self.close)
 
-        edit_menu = menubar.addMenu("Edit")
-        options_menu = menubar.addMenu("Options")
+        menubar.addMenu("Edit")
+        menubar.addMenu("Options")
 
     def get_button_style(self):
-        """Return the style for the buttons."""
+        """
+        Return the style for the menu buttons.
+        """
         return """
             QPushButton {
                 background-color: #e7f3ff;
@@ -226,11 +233,21 @@ class NeuralNetworkEvaluator(QMainWindow):
         """
 
     def switch_menu(self, index):
-        """Switch the displayed menu in the stacked widget."""
+        """
+        Switch the displayed menu in the stacked widget.
+
+        Args:
+            index (int): Index of the menu to display.
+        """
         self.stacked_widget.setCurrentIndex(index)
 
     def update_menu_button_styles(self, active_index):
-        """Update the styles of the menu buttons to highlight the active one."""
+        """
+        Update the styles of the menu buttons to highlight the active one.
+
+        Args:
+            active_index (int): Index of the active button.
+        """
         buttons = [self.training_overview_button, self.evaluate_test_set_button, self.compare_models_button]
         for i, button in enumerate(buttons):
             if i == active_index:
@@ -254,7 +271,10 @@ class NeuralNetworkEvaluator(QMainWindow):
                 button.setStyleSheet(self.get_button_style())
 
     def add_training_overview_page(self):
-        """Add the Training Overview page."""
+        """
+        Add the Training Overview page to the stacked widget.
+        This page displays training results and visualizations.
+        """
         page = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(20, 20, 20, 20)
@@ -314,7 +334,12 @@ class NeuralNetworkEvaluator(QMainWindow):
         self.stacked_widget.addWidget(page)
 
     def add_ground_truth_vs_prediction(self, figure):
-        """Add the Ground Truth vs Prediction plot."""
+        """
+        Add the Ground Truth vs Prediction plot to the given figure.
+
+        Args:
+            figure (Figure): Matplotlib figure to add the plot to.
+        """
         ax = figure.add_subplot(111)
         # Simulated data for Ground Truth and Prediction
         x = range(0, 1600, 10)
@@ -333,7 +358,12 @@ class NeuralNetworkEvaluator(QMainWindow):
         figure.subplots_adjust(left=0.15, right=0.95, top=0.9, bottom=0.2)  # Reduced bottom margin
 
     def add_predicted_vs_ground_truth(self, figure):
-        """Add the Predicted vs Ground Truth scatter plot."""
+        """
+        Add the Predicted vs Ground Truth scatter plot to the given figure.
+
+        Args:
+            figure (Figure): Matplotlib figure to add the plot to.
+        """
         ax = figure.add_subplot(111)
         # Simulated data for scatter plot
         import numpy as np
@@ -348,15 +378,18 @@ class NeuralNetworkEvaluator(QMainWindow):
         ax.legend(fontsize=10)
         ax.grid(True)
 
-    # Methods for menu actions
     def create_new_dataset(self):
-        """Open the DatasetBuilderWindow."""
+        """
+        Open the DatasetBuilderWindow to create a new dataset.
+        """
         self.dataset_builder = DatasetBuilderWindow(start_window_ref=self)
         self.dataset_builder.show()
         self.close()
 
     def load_existing_dataset(self):
-        """Open a file dialog to load an existing dataset."""
+        """
+        Open a file dialog to load an existing dataset.
+        """
         options = QFileDialog.Options()
         options |= QFileDialog.ReadOnly  # Open in read-only mode
         file_path, _ = QFileDialog.getOpenFileName(
@@ -371,13 +404,21 @@ class NeuralNetworkEvaluator(QMainWindow):
             # Add logic to process the dataset file here
 
     def save_dataset(self):
+        """
+        Save the current dataset.
+        """
         print("Saving the dataset...")
 
     def save_dataset_as(self):
+        """
+        Save the current dataset with a new name.
+        """
         print("Saving the dataset as...")
 
     def load_existing_model(self):
-        """Open a file dialog to load an existing model."""
+        """
+        Open a file dialog to load an existing model.
+        """
         options = QFileDialog.Options()
         options |= QFileDialog.ReadOnly  # Open in read-only mode
         file_path, _ = QFileDialog.getOpenFileName(
@@ -392,108 +433,22 @@ class NeuralNetworkEvaluator(QMainWindow):
             # Add logic to process the model file here
 
     def save_model(self):
+        """
+        Save the current model.
+        """
         print("Saving the current model...")
 
     def save_model_as(self):
+        """
+        Save the current model with a new name.
+        """
         print("Saving the current model as...")
 
-    def show_training_overview(self):
-        """Display the Ground Truth vs Prediction and Predicted vs Ground Truth plots."""
-        # Clear the plots container
-        while self.plots_container.count():
-            child = self.plots_container.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        # Add the "Load Model" button
-        load_model_button = QPushButton("Load model")
-        load_model_button.setStyleSheet("""
-            QPushButton {
-                background-color: #e7f3ff;
-                border: 1px solid #a6c8ff;
-                border-radius: 5px;
-                font-size: 16px;
-                padding: 12px;
-                min-width: 150px;  /* Largeur minimale */
-            }
-            QPushButton:hover {
-                background-color: #d0e7ff;
-            }
-            QPushButton:pressed {
-                background-color: #b3d4ff;
-            }
-        """)
-        load_model_button.clicked.connect(self.load_existing_model)
-
-        # Create a layout for the "Load Model" button
-        load_model_layout = QVBoxLayout()
-        load_model_layout.addWidget(load_model_button, alignment=Qt.AlignLeft)
-        load_model_layout.setContentsMargins(10, 20, 0, 20)  # Margins: left, top, right, bottom
-        self.plots_container.addLayout(load_model_layout)
-
-        # Create a horizontal layout for the plots
-        plots_layout = QHBoxLayout()
-        plots_layout.setSpacing(20)  # Add spacing between the plots
-
-        # Add the Ground Truth vs Prediction plot
-        ground_truth_container = QWidget()
-        ground_truth_layout = QVBoxLayout()
-        ground_truth_container.setLayout(ground_truth_layout)
-        ground_truth_container.setStyleSheet("background-color: white; border: 2px solid black; padding: 10px;")
-
-        ground_truth_plot = FigureCanvas(Figure(figsize=(5, 4)))
-        self.add_ground_truth_vs_prediction(ground_truth_plot.figure)
-        ground_truth_layout.addWidget(ground_truth_plot)
-        plots_layout.addWidget(ground_truth_container)
-
-        # Add the Predicted vs Ground Truth plot
-        predicted_vs_ground_truth_container = QWidget()
-        predicted_vs_ground_truth_layout = QVBoxLayout()
-        predicted_vs_ground_truth_container.setLayout(predicted_vs_ground_truth_layout)
-        predicted_vs_ground_truth_container.setStyleSheet("background-color: white; border: 2px solid black; padding: 10px;")
-
-        predicted_vs_ground_truth_plot = FigureCanvas(Figure(figsize=(5, 4)))
-        self.add_predicted_vs_ground_truth(predicted_vs_ground_truth_plot.figure)
-        predicted_vs_ground_truth_layout.addWidget(predicted_vs_ground_truth_plot)
-        plots_layout.addWidget(predicted_vs_ground_truth_container)
-
-        # Add the horizontal layout with plots to the main layout
-        self.plots_container.addLayout(plots_layout)
-
-    def add_training_loss_plot(self, figure):
-        """Add a plot showing the training loss over epochs."""
-        ax = figure.add_subplot(111)
-        epochs = range(1, 21)  # Example: 20 epochs
-        loss = [1 / (epoch + 1) for epoch in epochs]  # Example: decreasing loss
-        ax.plot(epochs, loss, label="Training Loss", color="blue")
-        ax.set_title("Training Loss Over Time")
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel("Loss")
-        ax.legend()
-        ax.grid(True)
-
-    def add_training_accuracy_plot(self, figure):
-        """Add a plot showing the training accuracy over epochs."""
-        ax = figure.add_subplot(111)
-        epochs = range(1, 21)  # Example: 20 epochs
-        accuracy = [epoch / 20 for epoch in epochs]  # Example: increasing accuracy
-        ax.plot(epochs, accuracy, label="Training Accuracy", color="green")
-        ax.set_title("Training Accuracy Over Time")
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel("Accuracy")
-        ax.legend()
-        ax.grid(True)
-
-    def evaluate_on_test_set(self):
-        """Placeholder for Evaluate on Test Set functionality."""
-        print("Evaluate on Test Set clicked!")
-
-    def compare_models(self):
-        """Placeholder for Compare Models functionality."""
-        print("Compare Models clicked!")
-
     def add_evaluate_test_set_page(self):
-        """Add the Evaluate on Test Set page."""
+        """
+        Add the Evaluate on Test Set page to the stacked widget.
+        This page allows users to evaluate the model on a test dataset.
+        """
         page = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(20, 20, 20, 20)
@@ -584,7 +539,10 @@ class NeuralNetworkEvaluator(QMainWindow):
         self.stacked_widget.addWidget(page)
 
     def add_compare_models_page(self):
-        """Add the Compare Models page with maximized plot visualization."""
+        """
+        Add the Compare Models page to the stacked widget.
+        This page allows users to compare different trained models.
+        """
         page = QWidget()
         layout = QVBoxLayout()
 
@@ -681,12 +639,19 @@ class NeuralNetworkEvaluator(QMainWindow):
         self.stacked_widget.addWidget(page)
 
     def add_empty_page(self):
-        """Add an empty page to the stacked widget."""
+        """
+        Add an empty page to the stacked widget as the default page.
+        """
         empty_page = QWidget()
         self.stacked_widget.addWidget(empty_page)
 
     def resizeEvent(self, event):
-        """Handle window resize events to adjust the plots dynamically."""
+        """
+        Handle window resize events to adjust the plots dynamically.
+
+        Args:
+            event: The resize event.
+        """
         for i in range(self.stacked_widget.count()):
             page = self.stacked_widget.widget(i)
             if page:

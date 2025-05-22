@@ -1,3 +1,2 @@
 /Users/ngxthanhuyen/Documents/NN_Project/sensor_data
 /Users/ngxthanhuyen/Downloads/Code/sample_h5_files
-/Users/ngxthanhuyen/Documents/NN_Project/sample_h5_files

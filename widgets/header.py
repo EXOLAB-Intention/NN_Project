@@ -3,6 +3,13 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QPalette, QColor, QPixmap
 import windows.progress_state as progress_state
 
+class ClickableLabel(QLabel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and hasattr(self, 'on_click'):
+            self.on_click()
+
 class Header(QWidget):
     tab_changed = pyqtSignal(str)  
     
@@ -24,10 +31,13 @@ class Header(QWidget):
         main_layout.setContentsMargins(20, 10, 20, 10)  
         
         # Add logo on the left
-        logo = QLabel()
+        logo = ClickableLabel()
         logo.setPixmap(QPixmap("assets/logo_exolab.png").scaled(90, 90, Qt.KeepAspectRatio))  
         logo.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        logo.setCursor(Qt.PointingHandCursor)
+        logo.on_click = self.on_logo_clicked  
         main_layout.addWidget(logo)
+    
         
         # Add spacer to push tabs to the right
         spacer = QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum)
@@ -56,6 +66,14 @@ class Header(QWidget):
         
         self.setLayout(main_layout)
         self.update_active_tab()
+
+    def on_logo_clicked(self):
+    # Open StartWindow and close current window
+        if self.parent_window:
+            from windows.start_window import StartWindow
+            start_window = StartWindow()
+            start_window.showMaximized()
+            self.parent_window.window().close()
         
     def create_tab(self, name):
         container = QWidget()

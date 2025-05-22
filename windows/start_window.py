@@ -8,41 +8,48 @@ from windows.dataset_builder_window import DatasetBuilderWindow
 from windows.nn_designer_window import NeuralNetworkDesignerWindow  
 from widgets.header import Header
 
-
 class StartWindow(QMainWindow):
     def __init__(self):
+        """
+        Initialize the StartWindow, set up the UI and load recent folders.
+        """
         super().__init__()
         self.setWindowTitle("Neural Network Trainer")
         self.setGeometry(100, 100, 600, 400)
 
+        # Load recent folders from file
         self.recent_folders = self.load_recent_folders()
 
+        # Build the UI
         self.init_ui()
 
-        # Add a centered status bar
+        # Add a centered status bar at the bottom
         status_bar = self.statusBar()
         status_label = QLabel("Data Monitoring Software version 1.0.13")
         status_label.setAlignment(Qt.AlignCenter)  
         status_bar.addPermanentWidget(status_label, 1)  
 
     def init_ui(self):
-        # Central widget and layout
+        """
+        Set up the main UI components: header, titles, buttons, recent folders list, and menu bar.
+        """
+        # Central widget and main layout (vertical)
         central_widget = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Header with tabs
+        # Add the custom header with navigation tabs
         header = Header(active_page="Start Window", parent_window=self)
         layout.addWidget(header)
 
-        # Title "Start" with larger font
+        # Add the main title "Start"
         title_start = QLabel("Start")
-        title_start.setFont(QFont("Arial", 40, QFont.Bold))
-        title_start.setContentsMargins(0, 20, 0, 0)  
+        title_start.setFont(QFont("Arial", 42, QFont.Bold))
+        title_start.setContentsMargins(10, 20, 0, 0)  
         layout.addWidget(title_start)
 
-        # Horizontal layout for buttons
+        # Add horizontal layout with "New Dataset" and "Open Dataset" buttons
         btn_layout = QHBoxLayout()
     
         btn_new = QPushButton("New Dataset…")
@@ -51,46 +58,54 @@ class StartWindow(QMainWindow):
         btn_open = QPushButton("Open Dataset…")
         btn_open.setIcon(QIcon("assets/open_data.png"))
 
+        btn_load = QPushButton("Load Model...")
+        btn_load.setIcon(QIcon("assets/load.png"))
+
         btn_new.setIconSize(QSize(36, 36))  
         btn_open.setIconSize(QSize(38, 38))
+        btn_load.setIconSize(QSize(33, 33))
 
-        btn_new.setFixedWidth(500)
-        btn_open.setFixedWidth(500)
+        btn_new.setFixedWidth(450)
+        btn_open.setFixedWidth(450)
+        btn_load.setFixedWidth(450)
 
         btn_new.setStyleSheet("padding-top: 10px; padding-bottom: 10px;")
         btn_open.setStyleSheet("padding-top: 10px; padding-bottom: 10px;")
+        btn_load.setStyleSheet("padding-top: 10px; padding-bottom: 10px;")
 
         btn_new.clicked.connect(self.create_new_dataset)
         btn_open.clicked.connect(self.open_dataset)
 
         btn_layout.addWidget(btn_new)
         btn_layout.addWidget(btn_open)
+        btn_layout.addWidget(btn_load)
 
         layout.addLayout(btn_layout)
 
-        # Title "Recent" with larger font
+        # Add the "Recent" title
         title_recent = QLabel("Recent")
         title_recent.setFont(QFont("Arial", 40, QFont.Bold))
-        title_recent.setContentsMargins(0, 20, 0, 0)  
+        title_recent.setContentsMargins(10, 20, 0, 0)  
         layout.addWidget(title_recent)
 
-        # Recent folders list
+        # Add the recent folders list widget
         self.recent_folders_list = QListWidget()
         self.recent_folders_list.setStyleSheet("border: 1px solid #dcdcdc; background-color: white;")
         self.recent_folders_list.itemDoubleClicked.connect(self.open_recent_folder)
         layout.addWidget(self.recent_folders_list)
 
+        # Populate the recent folders list
         self.update_recent_folders_list()
 
-        # Set layout
+        # Set the layout on the central widget
         central_widget.setLayout(layout)
         self.setCentralWidget(central_widget)
 
-        # Menu bar
+        # Create the menu bar and "File" menu
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
 
-        # Active actions
+        # Add actions to the File menu
         action_create = QAction("Create new dataset", self)
         action_create.triggered.connect(self.create_new_dataset)
 
@@ -105,18 +120,26 @@ class StartWindow(QMainWindow):
         file_menu.addAction(action_load_model)
 
     def create_new_dataset(self):
-        """Open the DatasetBuilderWindow."""
-        self.dataset_builder = DatasetBuilderWindow(start_window_ref=self)  # Pass self as a reference
+        """
+        Open the DatasetBuilderWindow for creating a new dataset.
+        """
+        self.dataset_builder = DatasetBuilderWindow(start_window_ref=self)  
         self.dataset_builder.showMaximized()
-        self.hide()  # Hide the StartWindow instead of closing it
+        self.hide()  
 
     def open_dataset(self):
+        """
+        Open a dialog to select a dataset folder, add it to recents, and open it in NeuralNetworkDesignerWindow.
+        """
         folder_path = QFileDialog.getExistingDirectory(self, "Select Dataset Folder")
         if folder_path:
             self.add_to_recent_folders(folder_path)
             self.open_neural_network_designer(folder_path)
 
     def open_recent_folder(self, item):
+        """
+        Open a recent folder in NeuralNetworkDesignerWindow if it exists, otherwise remove it from recents.
+        """
         folder_path = item.text()
         if os.path.exists(folder_path):
             self.open_neural_network_designer(folder_path)
@@ -126,12 +149,17 @@ class StartWindow(QMainWindow):
             self.update_recent_folders_list()
 
     def open_neural_network_designer(self, folder_path):
+        """
+        Open the NeuralNetworkDesignerWindow with the given dataset folder.
+        """
         self.hide()  # Use hide instead of close to keep the application running
         self.nn_designer_window = NeuralNetworkDesignerWindow(dataset_path=folder_path)
         self.nn_designer_window.showMaximized()           
 
-
     def load_recent_folders(self):
+        """
+        Load the list of recent folders from a text file.
+        """
         recent_file = "recent_folders.txt"
         if os.path.exists(recent_file):
             with open(recent_file, "r") as file:
@@ -139,17 +167,26 @@ class StartWindow(QMainWindow):
         return []
 
     def save_recent_folders(self):
+        """
+        Save the current list of recent folders to a text file.
+        """
         recent_file = "recent_folders.txt"
         with open(recent_file, "w") as file:
             file.writelines(f"{folder}\n" for folder in self.recent_folders)
 
     def update_recent_folders_list(self):
+        """
+        Update the QListWidget to display the current recent folders.
+        """
         self.recent_folders_list.clear()
         for folder in self.recent_folders:
             item = QListWidgetItem(folder)
             self.recent_folders_list.addItem(item)
 
     def add_to_recent_folders(self, folder):
+        """
+        Add a folder to the top of the recent folders list, ensuring no duplicates and a maximum of 10 items.
+        """
         if folder in self.recent_folders:
             self.recent_folders.remove(folder)
         self.recent_folders.insert(0, folder)
@@ -158,5 +195,7 @@ class StartWindow(QMainWindow):
         self.update_recent_folders_list()
 
     def load_existing_model(self):
+        """
+        Placeholder for loading an existing model (to be implemented).
+        """
         print("Load existing model...")
-
