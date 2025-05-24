@@ -728,3 +728,17 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                     item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                     item.setCheckState(Qt.Unchecked)
                     self.file_list.addItem(item)
+
+    def populate_file_list_with_paths(self, file_paths):
+        """
+        Populate the file list with the provided file paths.
+        
+        Args:
+            file_paths (list): List of file paths to display in the file list.
+        """
+        self.file_list.clear()
+        for file_path in file_paths:
+            item = QListWidgetItem(os.path.basename(file_path))
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.file_list.addItem(item)

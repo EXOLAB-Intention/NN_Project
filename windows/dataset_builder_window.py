@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, QProgressDialog,
-    QPushButton, QAction, QFileDialog, QDialog, QLineEdit, QListWidget, QListWidgetItem, QMessageBox
+    QPushButton, QAction, QFileDialog, QDialog, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QGroupBox, QCheckBox, QSizePolicy, QFrame
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QTextCursor, QIntValidator, QFont
@@ -10,6 +10,8 @@ import re
 import time
 from widgets.header import Header
 import windows.progress_state as progress_state
+import os
+import h5py
 
 class DatasetBuilderWindow(QMainWindow):
     """
@@ -87,14 +89,14 @@ class DatasetBuilderWindow(QMainWindow):
         content_container = QWidget()
         content_container.setContentsMargins(10, 10, 10, 10)
         container_layout = QVBoxLayout(content_container)
-        container_layout.setContentsMargins(0, 0, 0, 0)  
 
         # Add title and progress indicator
         self.create_title_progress_layout(container_layout)
         
-        # Main content layout (horizontal)
+        # Main content layout (horizontal) for alignment
         content_layout = QHBoxLayout()
-        container_layout.addLayout(content_layout)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(10) 
 
         # Left panel - File selection
         self.create_file_selection_panel(content_layout)
@@ -102,6 +104,8 @@ class DatasetBuilderWindow(QMainWindow):
         # Right panel - Input/Output
         self.create_io_panel(content_layout)
         
+        container_layout.addLayout(content_layout)
+
         # Bottom buttons
         self.create_button_row(container_layout)
         
@@ -152,7 +156,9 @@ class DatasetBuilderWindow(QMainWindow):
         
         # File selection header with buttons
         file_header = QHBoxLayout()
-        file_header.addWidget(QLabel("<b>File Selection</b>"))
+        file_title = QLabel("<b>File Selection</b>")
+        file_title.setStyleSheet("font-size: 16px; font-weight: bold;")  
+        file_header.addWidget(file_title)
         file_header.addStretch()
         
         add_btn = QPushButton("+ Add data")
@@ -228,27 +234,113 @@ class DatasetBuilderWindow(QMainWindow):
 
     def create_io_panel(self, parent_layout):
         """
-        Create the right panel for input/output display.
-        
-        Args:
-            parent_layout: The layout to which this will be added
+        Create the right panel with a white background, matching height, and simplified layout for Input/Output Selection.
         """
         right_panel = QVBoxLayout()
-        
-        # Panel title
-        right_panel.addWidget(QLabel("<b>Input/Output Selection</b>"))
-        
-        # Input text area
-        self.input_list = QTextEdit()
-        self.input_list.setPlaceholderText("Input")
-        right_panel.addWidget(self.input_list)
-        
-        # Output text area
-        self.output_list = QTextEdit()
-        self.output_list.setPlaceholderText("Output")
-        right_panel.addWidget(self.output_list)
-        
+
+        # Add title for Input/Output Selection
+        io_title = QLabel("<b>Input/Output Selection</b>")
+        io_title.setStyleSheet("font-size: 16px; font-weight: bold; margin-bottom: 10px;")
+        right_panel.addWidget(io_title)
+
+        # Main container styled like the file container
+        container = QFrame()
+        container.setFrameShape(QFrame.StyledPanel)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border: 1px solid #ddd;
+            }
+        """)
+        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(10, 10, 10, 10)
+        container_layout.setSpacing(10)
+
+        # Input Section
+        input_group = QGroupBox("Input")
+        input_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                margin-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """)
+        input_layout = QVBoxLayout()
+        input_layout.setContentsMargins(10, 10, 10, 10)
+
+        # EMG/IMU checkboxes in horizontal layout
+        checkbox_row = QHBoxLayout()
+        checkbox_row.setAlignment(Qt.AlignTop)  
+
+        # EMG Column
+        emg_group = QVBoxLayout()
+        emg_group.setAlignment(Qt.AlignTop) 
+        emg_label = QLabel("<b>EMG Sensors</b>")
+        emg_label.setStyleSheet("margin-bottom: 5px; border: none;")  # Removed border
+        emg_group.addWidget(emg_label)
+        self.emg_checkboxes = []
+        for i in range(1, 5):
+            cb_left = QCheckBox(f"emgL{i}")
+            cb_right = QCheckBox(f"emgR{i}")
+            emg_group.addWidget(cb_left)
+            emg_group.addWidget(cb_right)
+            self.emg_checkboxes.extend([cb_left, cb_right])
+        checkbox_row.addLayout(emg_group)
+
+        # IMU Column
+        imu_group = QVBoxLayout()
+        imu_group.setAlignment(Qt.AlignTop)  
+        imu_label = QLabel("<b>IMU Sensors</b>")
+        imu_label.setStyleSheet("margin-bottom: 5px; border: none;")  
+        imu_group.addWidget(imu_label)
+        self.imu_checkboxes = []
+        for i in range(1, 6):
+            cb = QCheckBox(f"imu{i}")
+            imu_group.addWidget(cb)
+            self.imu_checkboxes.append(cb)
+        checkbox_row.addLayout(imu_group)
+
+        input_layout.addLayout(checkbox_row)
+        input_group.setLayout(input_layout)
+        container_layout.addWidget(input_group)
+
+        # Output Section
+        output_group = QGroupBox("Output")
+        output_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                margin-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """)
+        output_layout = QVBoxLayout()
+        output_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Output checkbox
+        self.output_checkbox = QCheckBox("Button_ok")
+        self.output_checkbox.setChecked(True)
+        self.output_checkbox.setEnabled(False)
+        output_layout.addWidget(self.output_checkbox)
+
+        output_group.setLayout(output_layout)
+        container_layout.addWidget(output_group)
+
+        right_panel.addWidget(container)
         parent_layout.addLayout(right_panel)
+        
 
     def create_button_row(self, parent_layout):
         """
@@ -299,16 +391,33 @@ class DatasetBuilderWindow(QMainWindow):
             self.start_window_ref.showMaximized()
 
     def open_add_data_window(self):
-        """Open the Add Data window and update the file list when files are selected."""
-        self.add_data_window = AddDataWindow()
-        if self.add_data_window.exec_() == QDialog.Accepted:
-            selected_files = getattr(self.add_data_window, 'selected_files', [])
-            self.all_files.extend(selected_files)
+        """
+        Open a dialog to select a folder and add all .h5 files from the folder to the file list.
+        Store only file names in self.all_files for proper access.
+        """
+        folder_path = QFileDialog.getExistingDirectory(self, "Select Folder Containing .h5 Files")
+        if folder_path:
+            # Find all .h5 files in the selected folder
+            h5_files = [
+                file for file in os.listdir(folder_path) if file.endswith(".h5")
+            ]
+
+            if not h5_files:
+                QMessageBox.warning(self, "No Files Found", "No .h5 files found in the selected folder.")
+                return
+
+            # Add only file names to self.all_files
+            self.all_files.extend(h5_files)
             self.all_files = sorted(self.all_files, key=self.extract_number)
+
+            # Store the selected folder path for later use
+            self.selected_folder = folder_path
 
             # Display the first page
             self.current_page = 0
             self.show_page()
+        else:
+            QMessageBox.information(self, "No Folder Selected", "No folder was selected.")
 
     def delete_data(self):
         """Delete selected files from the list."""
@@ -349,46 +458,111 @@ class DatasetBuilderWindow(QMainWindow):
         self.top_right_label.setText(f"Progress Statement : {text}")
 
     def build_dataset(self):
-        """Simulate dataset building with progress dialog and open next window when complete."""
-        if progress_state.dataset_built:
-            reply = QMessageBox.question(
-                self,
-                "Rebuild Dataset?",
-                "You have already built the dataset. Rebuilding it will reset all progress. Do you want to continue?",
-                QMessageBox.Yes | QMessageBox.No
-            )
-            if reply == QMessageBox.No:
-                return
-                
-        progress_state.dataset_built = False
-        progress_state.nn_designed = False
-        
-        # Create and show progress dialog
-        progress = QProgressDialog("Building dataset...", "Cancel", 0, 100, self)
-        progress.setWindowTitle("Progress")
-        progress.setWindowModality(Qt.WindowModal)
-        progress.setMinimumDuration(0)
-        progress.setValue(0)
+        """
+        Filter the .h5 files based on selected inputs, save the configuration to a .txt file,
+        and navigate to the NN Designer page.
+        """
+        if not self.all_files:
+            QMessageBox.warning(self, "No Files", "No files available to build the dataset.")
+            return
 
-        # Simulate progress
-        for i in range(101):
-            time.sleep(0.01)  
-            progress.setValue(i)
-            if progress.wasCanceled():
-                self.statusBar().showMessage("Dataset building cancelled.", 3000)
-                return
+        # Debug: Print all file names
+        print("Files to process:")
+        for file_name in self.all_files:
+            print(file_name)
 
-        self.statusBar().showMessage("Dataset built successfully!", 3000)
-        
-        # Update state and open next window
-        progress_state.dataset_built = True
-        self.open_nn_designer()
+        # Get selected inputs
+        selected_inputs = [cb.text() for cb in self.emg_checkboxes + self.imu_checkboxes if cb.isChecked()]
+        if not selected_inputs:
+            QMessageBox.warning(self, "No Inputs Selected", "Please select at least one input sensor.")
+            return
 
-    def open_nn_designer(self):
-        """Open the Neural Network Designer window and hide this one."""
-        self.nn_designer_window = NeuralNetworkDesignerWindow()
+        # Ensure output (button_ok) is always included
+        selected_outputs = ["button_ok"]
+
+        # Create a new dataset folder only if files are processed
+        parent_folder = "datasets"
+        os.makedirs(parent_folder, exist_ok=True)
+        dataset_index = len([name for name in os.listdir(parent_folder) if os.path.isdir(os.path.join(parent_folder, name)) and name.startswith("dataset")]) + 1
+        dataset_folder = os.path.join(parent_folder, f"dataset{dataset_index}")
+
+        # Filter and save the dataset
+        filtered_files = []
+        for file_name in self.all_files:
+            file_path = os.path.join(self.selected_folder, file_name)  # Use the selected folder path
+            if not os.path.exists(file_path):
+                QMessageBox.warning(self, "File Missing", f"File not found: {file_name}. Skipping...")
+                continue
+
+            try:
+                with h5py.File(file_path, 'r') as h5_file:
+                    filtered_data = {}
+
+                    # Recursive function to search for selected inputs
+                    def search_and_filter(group, trial_data):
+                        for key, item in group.items():
+                            if isinstance(item, h5py.Group):
+                                # Recursively search in sub-groups
+                                search_and_filter(item, trial_data)
+                            elif isinstance(item, h5py.Dataset) and key in selected_inputs + selected_outputs:
+                                trial_data[key] = item[()]
+
+                    # Iterate through trials and apply the recursive search
+                    for trial in h5_file.keys():
+                        trial_data = {}
+                        search_and_filter(h5_file[trial], trial_data)
+                        if trial_data:
+                            filtered_data[trial] = trial_data
+
+                    # Save the filtered data to a file in the dataset folder
+                    os.makedirs(dataset_folder, exist_ok=True)  # Create the dataset folder only when needed
+                    filtered_file_path = os.path.join(dataset_folder, f"filtered_{file_name}")
+                    with h5py.File(filtered_file_path, 'w') as filtered_h5:
+                        for trial, trial_data in filtered_data.items():
+                            trial_group = filtered_h5.create_group(trial)
+                            for dataset, data in trial_data.items():
+                                trial_group.create_dataset(dataset, data=data)
+                    filtered_files.append(f"filtered_{file_name}")
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Error processing file {file_name}: {e}")
+                continue
+
+        # Save the configuration to a .txt file in the dataset folder
+        if filtered_files:
+            from datetime import datetime
+            # Get current date and time
+            creation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S") 
+
+            config_file_path = os.path.join(dataset_folder, "dataset_config.txt")
+            with open(config_file_path, 'w') as config_file:
+                config_file.write(f"Dataset Creation Date: {creation_time}\n\n")
+                config_file.write("Selected Inputs:\n")
+                config_file.writelines(f"- {sensor}\n" for sensor in selected_inputs)
+                config_file.write("\nSelected Outputs:\n")
+                config_file.writelines(f"- {output}\n" for output in selected_outputs)
+                config_file.write("\nFiltered Files:\n")
+                config_file.writelines(f"- {file}\n" for file in filtered_files)
+
+            QMessageBox.information(self, "Dataset Built", f"Dataset built successfully! Configuration saved to {config_file_path}")
+
+            # Update progress state and navigate to NN Designer
+            progress_state.dataset_built = True
+            self.open_nn_designer(filtered_files, dataset_folder)
+        else:
+            QMessageBox.warning(self, "No Files Processed", "No files were successfully processed.")
+
+    def open_nn_designer(self, filtered_files, dataset_folder):
+        """
+        Open the Neural Network Designer window with the filtered dataset.
+
+        Args:
+            filtered_files (list): List of filtered .h5 file names.
+            dataset_folder (str): Path to the dataset folder.
+        """
+        self.nn_designer_window = NeuralNetworkDesignerWindow(dataset_path=dataset_folder)
+        self.nn_designer_window.populate_file_list_with_paths(filtered_files)  # Pass filtered file names to NN Designer
         self.nn_designer_window.showMaximized()
-        self.hide()  
+        self.hide()
 
     def filter_file_list(self):
         """Filter the file list based on the search text in the search bar."""
