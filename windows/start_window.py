@@ -7,6 +7,8 @@ from windows.add_data_window import AddDataWindow
 from windows.dataset_builder_window import DatasetBuilderWindow
 from windows.nn_designer_window import NeuralNetworkDesignerWindow  
 from widgets.header import Header
+import windows.progress_state as progress_state
+
 
 class StartWindow(QMainWindow):
     def __init__(self):
@@ -75,6 +77,7 @@ class StartWindow(QMainWindow):
 
         btn_new.clicked.connect(self.create_new_dataset)
         btn_open.clicked.connect(self.open_dataset)
+        btn_load.clicked.connect(self.load_existing_model)
 
         btn_layout.addWidget(btn_new)
         btn_layout.addWidget(btn_open)
@@ -123,9 +126,13 @@ class StartWindow(QMainWindow):
         """
         Open the DatasetBuilderWindow for creating a new dataset.
         """
+        from windows.dataset_builder_window import DatasetBuilderWindow
+        # Ne réinitialise progress_state.dataset_built que si tu veux vraiment forcer un nouveau dataset
+        # progress_state.dataset_built = False
+        progress_state.nn_designed = False
         self.dataset_builder = DatasetBuilderWindow(start_window_ref=self)  
         self.dataset_builder.showMaximized()
-        self.hide()  
+        self.hide()
 
     def open_dataset(self):
         """
@@ -152,8 +159,11 @@ class StartWindow(QMainWindow):
         """
         Open the NeuralNetworkDesignerWindow with the given dataset folder.
         """
+        progress_state.dataset_built = True
+        progress_state.nn_designed = False
         self.hide()  # Use hide instead of close to keep the application running
         self.nn_designer_window = NeuralNetworkDesignerWindow(dataset_path=folder_path)
+        self.nn_designer_window.parent_window = self  # pour garder la référence
         self.nn_designer_window.showMaximized()           
 
     def load_recent_folders(self):
@@ -196,6 +206,27 @@ class StartWindow(QMainWindow):
 
     def load_existing_model(self):
         """
-        Placeholder for loading an existing model (to be implemented).
+        Load a previously trained model (.h5) and open it in the NN Evaluator window.
         """
-        print("Load existing model...")
+        from PyQt5.QtWidgets import QFileDialog, QMessageBox
+        from tensorflow.keras.models import load_model
+        from windows.nn_evaluator_window import NeuralNetworkEvaluator
+
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File", "", "H5 Files (*.h5)")
+        if not file_path:
+            return
+
+        try:
+            model = load_model(file_path)
+
+            # 🧠 Ouvre la fenêtre d'évaluation avec le modèle chargé
+            progress_state.dataset_built = True
+            progress_state.nn_designed = True
+            self.nn_evaluator_window = NeuralNetworkEvaluator()
+            self.nn_evaluator_window.model = model  # Injecte le modèle si la classe le supporte
+            self.nn_evaluator_window.showMaximized()
+            self.hide()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load model:\n{str(e)}")
+

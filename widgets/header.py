@@ -68,7 +68,16 @@ class Header(QWidget):
         self.update_active_tab()
 
     def on_logo_clicked(self):
-    # Open StartWindow and close current window
+        # Demande de confirmation avant retour au StartWindow
+        reply = QMessageBox.question(
+            self,
+            "Confirm Return",
+            "Are you sure you want to return to the start? All unsaved progress will be lost.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.No:
+            return  # Annule le retour
+
         if self.parent_window:
             from windows.start_window import StartWindow
             start_window = StartWindow()
@@ -105,31 +114,54 @@ class Header(QWidget):
         return container
     
     def on_tab_clicked(self, tab_name):
+        if hasattr(self.parent_window, "is_training") and self.parent_window.is_training:
+            QMessageBox.warning(self, "Training in progress", "Please wait for training to finish before navigating.")
+            return
+        
+        current_window = self.parent_window.window()
+        # Arrêt propre du thread d'entraînement s'il existe
+        if hasattr(current_window, "train_thread") and current_window.train_thread is not None:
+            if current_window.train_thread.isRunning():
+                current_window.train_thread.quit()
+                current_window.train_thread.wait()
+        
+        # Get COMPLETE current state
+        saved_state = current_window.get_saved_state() if hasattr(current_window, "get_saved_state") else {}
+        
         if tab_name == "Neural Network Designer" and not progress_state.dataset_built:
-            self.show_warning("You must complete 'Dataset Builder' first.")
+            QMessageBox.warning(self, "Access Denied", "You must complete Dataset Builder first")
             return
-        if tab_name == "Neural Network Evaluator" and not (progress_state.dataset_built and progress_state.nn_designed):
-            self.show_warning("You must complete both 'Dataset Builder' and 'Neural Network Designer' first.")
-            return
+            
+        new_window = None
+        if tab_name == "Dataset Builder":
+            from windows.dataset_builder_window import DatasetBuilderWindow
+            new_window = DatasetBuilderWindow(saved_state=saved_state)
+        elif tab_name == "Neural Network Designer":
+            from windows.nn_designer_window import NeuralNetworkDesignerWindow
+            new_window = NeuralNetworkDesignerWindow(
+                dataset_path=saved_state.get("dataset_path"),
+                saved_state=saved_state  # <-- c'est ça qui doit contenir l'état précédent
+            )
+        elif tab_name == "Neural Network Evaluator":
+            if not progress_state.training_started:
+                QMessageBox.warning(self, "Warning", "You must complete training first")
+                return
+                saved_state = current_window.get_saved_state() if hasattr(current_window, "get_saved_state") else {}
 
-        self.tab_changed.emit(tab_name)
-
-        if self.parent_window:
-            current_window = self.parent_window.window()
-
-            if tab_name == "Dataset Builder":
-                from windows.dataset_builder_window import DatasetBuilderWindow
-                new_window = DatasetBuilderWindow()
-            elif tab_name == "Neural Network Designer":
-                from windows.nn_designer_window import NeuralNetworkDesignerWindow
-                new_window = NeuralNetworkDesignerWindow()
-            elif tab_name == "Neural Network Evaluator":
+            if not hasattr(self.parent_window, "nn_evaluator_window") or self.parent_window.nn_evaluator_window is None:
                 from windows.nn_evaluator_window import NeuralNetworkEvaluator
-                new_window = NeuralNetworkEvaluator()
+                self.parent_window.nn_evaluator_window = NeuralNetworkEvaluator(saved_state=saved_state)
+                self.parent_window.nn_evaluator_window.parent_window = self.parent_window
 
+            new_window = self.parent_window.nn_evaluator_window
+        else:
+            QMessageBox.warning(self, "Error", f"Unsupported tab: {tab_name}")
+            return
+
+        if new_window:
             new_window.showMaximized()
             current_window.close()
-    
+
     def update_active_tab(self):
         for name, tab in self.tabs.items():
             tab_label = tab.layout().itemAt(0).widget()

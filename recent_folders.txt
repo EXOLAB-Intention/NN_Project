@@ -1,2 +1,10 @@
-/Users/ngxthanhuyen/Documents/NN_Project/sensor_data
-/Users/ngxthanhuyen/Downloads/Code/sample_h5_files
+C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN-Package/datasets/dataset12
+C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN-Package/datasets/dataset7
+C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN-Package/data10
+C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN-Package/datasets/dataset55
+C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN-Package/datasets/dataset6
+C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN-Package/datasets/dataset23
+C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN-Package/datasets/dataset8
+C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN-Package/datasets/dataset5
+C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN-Package/datasets/dataset10
+C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN-Package/datasets
