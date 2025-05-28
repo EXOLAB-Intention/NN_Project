@@ -1,4 +1,3 @@
-# requirements: pyqt5, torch, numpy, h5py, matplotlib, scikit-learn
 import sys
 import h5py
 import numpy as np
@@ -268,35 +267,144 @@ class LabelSmoothingLoss(nn.Module):
             true_dist.scatter_(1, target.data.unsqueeze(1), self.confidence)
         return torch.mean(torch.sum(-true_dist * pred, dim=-1))
 
-def load_and_preprocess_data(path, window_size=20, stride=5):
-    """Load and preprocess data with sliding window approach"""
+def load_and_preprocess_data(path, window_size=20, stride=5, selected_keys=None):
+    """Charge un fichier HDF5 (format trial_* ou Sensor/Controller) avec affichage des signaux."""
+    X_all, y_all = [], []
+
+    import os
+    print(f"\n📂 Chargement : {os.path.basename(path)}")
+
     with h5py.File(path, 'r') as h5file:
-        trial = h5file['trial_1']
-        
-        # Load signals
-        X = []
-        # EMG signals (normalized)
-        for key in ["emgL1", "emgL2", "emgL3", "emgL4", "emgR1", "emgR2", "emgR3", "emgR4"]:
-            signal = np.array(trial[key])[0]
-            # Simple normalization
-            signal = (signal - signal.mean()) / (signal.std() + 1e-8)
-            X.append(signal)
-        
-        # IMU signals
-        for key in ["imu1", "imu2", "imu3", "imu4", "imu5"]:
-            imu_data = np.array(trial[key])
-            for i in range(imu_data.shape[0]):
-                signal = imu_data[i]
-                signal = (signal - signal.mean()) / (signal.std() + 1e-8)
-                X.append(signal)
-        
-        X = np.stack(X, axis=-1)  
-        y = np.array(trial["button_ok"])[0]
-    
-    # Create sliding windows
-    X_windows, y_windows = create_sliding_windows(X, y, window_size, stride)
-    
-    return X_windows, y_windows
+        keys = list(h5file.keys())
+
+        # === CAS 1 : fichiers avec trial_1, trial_2, ...
+        if any(k.startswith("trial_") for k in keys):
+            print("📁 Format : trial_*")
+            for trial_name in keys:
+                if not trial_name.startswith("trial_"):
+                    continue
+
+                trial = h5file[trial_name]
+                print(f"  🧪 {trial_name} :")
+                available_keys = list(trial.keys())
+                emg_keys = [k for k in available_keys if k.startswith("emg")]
+                imu_keys = [k for k in available_keys if k.startswith("imu")]
+
+                if selected_keys is not None:
+                    emg_keys = [k for k in emg_keys if k in selected_keys]
+                    imu_keys = [k for k in imu_keys if k in selected_keys]
+
+                X = []
+
+                for key in emg_keys:
+                    signal = np.array(trial[key])[0]
+                    print(f"    ➤ {key} | shape: {signal.shape}")
+                    print(f"      Extrait : {signal[:10]}")
+                    std = signal.std()
+                    if std < 1e-6:
+                        continue
+                    signal = (signal - signal.mean()) / (std + 1e-8)
+                    X.append(signal)
+
+                for key in imu_keys:
+                    imu_data = np.array(trial[key])
+                    for i in range(imu_data.shape[0]):
+                        signal = imu_data[i]
+                        print(f"    ➤ {key}[{i}] | shape: {signal.shape}")
+                        print(f"      Extrait : {signal[:10]}")
+                        std = signal.std()
+                        if std < 1e-6:
+                            continue
+                        signal = (signal - signal.mean()) / (std + 1e-8)
+                        X.append(signal)
+
+                if len(X) == 0 or "button_ok" not in trial:
+                    continue
+
+                X = np.stack(X, axis=-1)
+                y = np.array(trial["button_ok"])[0]
+
+                X_windows, y_windows = create_sliding_windows(X, y, window_size, stride)
+                X_all.append(X_windows)
+                y_all.append(y_windows)
+
+        # === CAS 2 : Sensor/Controller
+        elif "Sensor" in keys and "Controller" in keys:
+            print("📁 Format : Sensor/Controller")
+            sensor = h5file["Sensor"]
+            ctrl = h5file["Controller"]
+
+            available_keys = list(sensor.keys())
+            emg_keys = [k for k in available_keys if k.startswith("emg")]
+            imu_keys = [k for k in available_keys if k.startswith("imu")]
+
+            if selected_keys is not None:
+                emg_keys = [k for k in emg_keys if k in selected_keys]
+                imu_keys = [k for k in imu_keys if k in selected_keys]
+
+            if not emg_keys and not imu_keys:
+                raise ValueError("Aucun signal EMG ou IMU trouvé dans Sensor.")
+            if "button_ok" not in ctrl:
+                raise ValueError("Clé 'button_ok' manquante dans Controller.")
+
+            print("  🧪 Sensor :")
+            X = []
+
+            for key in emg_keys:
+                signal = np.array(sensor[key])
+                print(f"    ➤ {key} | shape: {signal.shape}")
+                print(f"      Extrait : {signal[:10]}")
+                if signal.ndim > 1:
+                    for i in range(signal.shape[0]):
+                        ch = signal[i]
+                        std = ch.std()
+                        if std < 1e-6:
+                            continue
+                        ch = (ch - ch.mean()) / (std + 1e-8)
+                        X.append(ch)
+                else:
+                    std = signal.std()
+                    if std < 1e-6:
+                        continue
+                    signal = (signal - signal.mean()) / (std + 1e-8)
+                    X.append(signal)
+
+            for key in imu_keys:
+                imu_data = np.array(sensor[key])
+                print(f"    ➤ {key} | shape: {imu_data.shape}")
+                print(f"      Extrait : {imu_data[:10]}")
+                if imu_data.ndim == 2:
+                    for i in range(imu_data.shape[1]):
+                        signal = imu_data[:, i]
+                        std = signal.std()
+                        if std < 1e-6:
+                            continue
+                        signal = (signal - signal.mean()) / (std + 1e-8)
+                        X.append(signal)
+
+            if len(X) == 0:
+                raise ValueError("Aucun signal exploitable dans Sensor.")
+
+            X = np.stack(X, axis=-1)
+            y = np.array(ctrl["button_ok"])  # ⚠️ PAS de [0] ici
+
+            X_windows, y_windows = create_sliding_windows(X, y, window_size, stride)
+            X_all.append(X_windows)
+            y_all.append(y_windows)
+
+        else:
+            raise ValueError("Structure de fichier non reconnue (ni trial_*, ni Sensor/Controller).")
+
+    if not X_all:
+        raise ValueError("Aucune donnée exploitable trouvée dans le fichier.")
+
+    X_final = np.concatenate(X_all)
+    y_final = np.concatenate(y_all)
+
+    print(f"✅ Données extraites : X.shape = {X_final.shape}, y.shape = {y_final.shape}")
+    print(f"   ➤ Extrait y : {y_final[:10]}")
+
+    return X_final, y_final
 
 def create_sliding_windows(X, y, window_size, stride):
     """Create sliding windows for training"""
@@ -664,53 +772,69 @@ class EMGIMUGUI(QMainWindow):
         self.layer_layout.addWidget(combo)
         self.layer_type_combos.append(combo)
 
+    def load_multiple_files(self, folder_path, window_size, stride, selected_keys):
+        import os
+        X_all, y_all = [], []
+        for fname in sorted(os.listdir(folder_path)):
+            if fname.endswith(".h5"):
+                file_path = os.path.join(folder_path, fname)
+                try:
+                    print(f"🔍 Lecture de : {fname}")
+                    X, y = load_and_preprocess_data(file_path, window_size, stride, selected_keys)
+                    if X.size > 0:
+                        X_all.append(X)
+                        y_all.append(y)
+                except Exception as e:
+                    print(f"❌ Erreur avec {fname}: {e}")
+
+        if not X_all:
+            raise ValueError("Aucun fichier valide ou signal utilisable trouvé.")
+
+        return np.concatenate(X_all), np.concatenate(y_all)
+
     def load_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open File", "", "HDF5 Files (*.h5)")
-        if file_path:
+        folder_path = QFileDialog.getExistingDirectory(self, "Select Folder with .h5 Files")
+        if folder_path:
             try:
                 window_size = self.window_size_spin.value()
                 stride = self.stride_spin.value()
-                
-                self.X, self.y = load_and_preprocess_data(file_path, window_size, stride)
+
+                selected_keys = None  # ou ex: ["emgL3", "imu1"] si tu veux filtrer
+
+                self.X, self.y = self.load_multiple_files(folder_path, window_size, stride, selected_keys)
 
                 print("Classes:", dict(zip(*np.unique(self.y, return_counts=True))))
 
-                from sklearn.utils import resample
+                from sklearn.utils import resample, shuffle
 
-                # Séparer les classes
                 class_0 = self.X[self.y == 0]
                 class_1 = self.X[self.y == 1]
 
-                from sklearn.utils import resample, shuffle
-
-                # Sur-échantillonnage pour équilibrer
                 if len(class_0) > len(class_1):
                     class_1 = resample(class_1, replace=True, n_samples=len(class_0), random_state=42)
                 else:
                     class_0 = resample(class_0, replace=True, n_samples=len(class_1), random_state=42)
 
-                # Fusionner les deux classes
                 self.X = np.concatenate([class_0, class_1])
                 self.y = np.array([0] * len(class_0) + [1] * len(class_1))
-
-                # Mélange des données (shuffle global)
                 self.X, self.y = shuffle(self.X, self.y, random_state=42)
 
-                # Statistics
                 unique, counts = np.unique(self.y, return_counts=True)
                 stats = f"Data loaded: {self.X.shape[0]} samples\n"
                 stats += f"Classes: {dict(zip(unique, counts))}\n"
                 stats += f"Shape: {self.X.shape}\n"
-                stats += f"Features: {self.X.shape[2]} (8 EMG + 5 IMU)"
-                
-                self.status.setText("File loaded successfully")
+                stats += f"Features: {self.X.shape[2]} (EMG + IMU détectés)"
+
+                self.status.setText("✔️ Dossier chargé avec succès")
                 self.results_text.setText(stats)
                 self.train_button.setEnabled(True)
-                        
+
             except Exception as e:
-                self.status.setText(f"Error loading file: {str(e)}")
-                
-    
+                import traceback
+                self.status.setText(f"❌ Erreur: {str(e)}")
+                traceback.print_exc()
+
+                    
     def train_model(self):
         if self.X is None:
             return

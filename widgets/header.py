@@ -105,31 +105,39 @@ class Header(QWidget):
         return container
     
     def on_tab_clicked(self, tab_name):
+        current_window = self.parent_window.window()
+        
+        # Get COMPLETE current state
+        saved_state = current_window.get_saved_state() if hasattr(current_window, "get_saved_state") else {}
+        
         if tab_name == "Neural Network Designer" and not progress_state.dataset_built:
-            self.show_warning("You must complete 'Dataset Builder' first.")
+            QMessageBox.warning(self, "Access Denied", "You must complete Dataset Builder first")
             return
-        if tab_name == "Neural Network Evaluator" and not (progress_state.dataset_built and progress_state.nn_designed):
-            self.show_warning("You must complete both 'Dataset Builder' and 'Neural Network Designer' first.")
+            
+        new_window = None
+        if tab_name == "Dataset Builder":
+            from windows.dataset_builder_window import DatasetBuilderWindow
+            new_window = DatasetBuilderWindow(saved_state=saved_state)
+        elif tab_name == "Neural Network Designer":
+            from windows.nn_designer_window import NeuralNetworkDesignerWindow
+            new_window = NeuralNetworkDesignerWindow(
+                dataset_path=saved_state.get("dataset_path"),
+                saved_state=saved_state
+            )
+        elif tab_name == "Neural Network Evaluator":
+            if not progress_state.training_started:
+                QMessageBox.warning(self, "Warning", "You must complete training first")
+                return
+            from windows.nn_evaluator_window import NeuralNetworkEvaluator
+            new_window = NeuralNetworkEvaluator()
+        else:
+            QMessageBox.warning(self, "Error", f"Unsupported tab: {tab_name}")
             return
 
-        self.tab_changed.emit(tab_name)
-
-        if self.parent_window:
-            current_window = self.parent_window.window()
-
-            if tab_name == "Dataset Builder":
-                from windows.dataset_builder_window import DatasetBuilderWindow
-                new_window = DatasetBuilderWindow()
-            elif tab_name == "Neural Network Designer":
-                from windows.nn_designer_window import NeuralNetworkDesignerWindow
-                new_window = NeuralNetworkDesignerWindow()
-            elif tab_name == "Neural Network Evaluator":
-                from windows.nn_evaluator_window import NeuralNetworkEvaluator
-                new_window = NeuralNetworkEvaluator()
-
+        if new_window:
             new_window.showMaximized()
             current_window.close()
-    
+
     def update_active_tab(self):
         for name, tab in self.tabs.items():
             tab_label = tab.layout().itemAt(0).widget()

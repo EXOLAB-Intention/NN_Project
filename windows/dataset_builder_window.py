@@ -19,25 +19,39 @@ class DatasetBuilderWindow(QMainWindow):
     Handles file selection, dataset building, and navigation to other modules.
     """
     
-    def __init__(self, start_window_ref=None):
+    def __init__(self, start_window_ref=None, saved_state=None):
         """
         Initialize the Dataset Builder window.
         
         Args:
             start_window_ref (QMainWindow): Reference to the start window for navigation
+            saved_state (dict): A dictionary containing the saved state of the Dataset Builder.
         """
         super().__init__()
         self.start_window_ref = start_window_ref
         self.setWindowTitle("Neural Network Trainer")
         self.setGeometry(100, 100, 1000, 600)
 
+        self.state = {
+            "selected_folder": None,
+            "all_files": [],
+            "selected_inputs": [],
+            "filtered_files": [],
+            "current_page": 0
+        }
+
+        if saved_state:
+            self.state.update(saved_state)
+
         # Pagination variables
-        self.current_page = 0
-        self.items_per_page = 100
-        self.all_files = []
+        self.items_per_page = 100  # Default number of items per page
 
         # Initialize UI components
         self.init_ui()
+
+        # Restore selected inputs and display files
+        self.restore_state()
+        self.show_page()
 
     def init_ui(self):
         """Initialize all UI components of the window."""
@@ -85,9 +99,9 @@ class DatasetBuilderWindow(QMainWindow):
         """Create the main content area with file selection and input/output panels."""
         main_layout = self.centralWidget().layout()
         
-        # Content container with margins
+        # Content container with reduced margins
         content_container = QWidget()
-        content_container.setContentsMargins(10, 10, 10, 10)
+        content_container.setContentsMargins(0, 0, 0, 0)  
         container_layout = QVBoxLayout(content_container)
 
         # Add title and progress indicator
@@ -234,7 +248,7 @@ class DatasetBuilderWindow(QMainWindow):
 
     def create_io_panel(self, parent_layout):
         """
-        Create the right panel with a white background, matching height, and simplified layout for Input/Output Selection.
+        Create the right panel for Input/Ouput selection.
         """
         right_panel = QVBoxLayout()
 
@@ -275,7 +289,7 @@ class DatasetBuilderWindow(QMainWindow):
         input_layout = QVBoxLayout()
         input_layout.setContentsMargins(10, 10, 10, 10)
 
-        # EMG/IMU checkboxes in horizontal layout
+        # EMG/IMU checkboxes 
         checkbox_row = QHBoxLayout()
         checkbox_row.setAlignment(Qt.AlignTop)  
 
@@ -283,7 +297,7 @@ class DatasetBuilderWindow(QMainWindow):
         emg_group = QVBoxLayout()
         emg_group.setAlignment(Qt.AlignTop) 
         emg_label = QLabel("<b>EMG Sensors</b>")
-        emg_label.setStyleSheet("margin-bottom: 5px; border: none;")  # Removed border
+        emg_label.setStyleSheet("margin-bottom: 5px; border: none;")  
         emg_group.addWidget(emg_label)
         self.emg_checkboxes = []
         for i in range(1, 5):
@@ -407,14 +421,14 @@ class DatasetBuilderWindow(QMainWindow):
                 return
 
             # Add only file names to self.all_files
-            self.all_files.extend(h5_files)
-            self.all_files = sorted(self.all_files, key=self.extract_number)
+            self.state["all_files"].extend(h5_files)
+            self.state["all_files"] = sorted(self.state["all_files"], key=self.extract_number)
 
             # Store the selected folder path for later use
-            self.selected_folder = folder_path
+            self.state["selected_folder"] = folder_path
 
             # Display the first page
-            self.current_page = 0
+            self.state["current_page"] = 0
             self.show_page()
         else:
             QMessageBox.information(self, "No Folder Selected", "No folder was selected.")
@@ -428,7 +442,7 @@ class DatasetBuilderWindow(QMainWindow):
         # Remove the selected items from the complete list of files
         for item in selected_items:
             file_name = item.text()
-            self.all_files.remove(file_name)  
+            self.state["all_files"].remove(file_name)  
             self.file_list.takeItem(self.file_list.row(item))  
 
     def update_progress_label(self, active_step, completed_steps=None):
@@ -436,8 +450,8 @@ class DatasetBuilderWindow(QMainWindow):
         Update the progress label showing the current workflow step.
         
         Args:
-            active_step (str): The currently active step (highlighted)
-            completed_steps (list): List of completed steps (shown in green)
+            active_step (str): The currently active step (orange)
+            completed_steps (list): List of completed steps (green)
         """
         steps = ["Dataset Builder", "NN Designer", "NN Evaluator"]
         completed_steps = completed_steps or []
@@ -462,13 +476,13 @@ class DatasetBuilderWindow(QMainWindow):
         Filter the .h5 files based on selected inputs, save the configuration to a .txt file,
         and navigate to the NN Designer page.
         """
-        if not self.all_files:
+        if not self.state["all_files"]:
             QMessageBox.warning(self, "No Files", "No files available to build the dataset.")
             return
 
         # Debug: Print all file names
         print("Files to process:")
-        for file_name in self.all_files:
+        for file_name in self.state["all_files"]:
             print(file_name)
 
         # Get selected inputs
@@ -488,8 +502,8 @@ class DatasetBuilderWindow(QMainWindow):
 
         # Filter and save the dataset
         filtered_files = []
-        for file_name in self.all_files:
-            file_path = os.path.join(self.selected_folder, file_name)  # Use the selected folder path
+        for file_name in self.state["all_files"]:
+            file_path = os.path.join(self.state["selected_folder"], file_name)  # Use the selected folder path
             if not os.path.exists(file_path):
                 QMessageBox.warning(self, "File Missing", f"File not found: {file_name}. Skipping...")
                 continue
@@ -545,22 +559,40 @@ class DatasetBuilderWindow(QMainWindow):
 
             QMessageBox.information(self, "Dataset Built", f"Dataset built successfully! Configuration saved to {config_file_path}")
 
-            # Update progress state and navigate to NN Designer
+            # Prepare complete state transfer
+            saved_state = self.get_saved_state()
+            saved_state.update({
+                "filtered_files": filtered_files,
+                "dataset_path": dataset_folder,
+                "selected_files": []  # Start with no files selected
+            })
+            
             progress_state.dataset_built = True
-            self.open_nn_designer(filtered_files, dataset_folder)
+            self.nn_designer = NeuralNetworkDesignerWindow(
+                dataset_path=dataset_folder,
+                saved_state=saved_state
+            )
+            self.nn_designer.showMaximized()
+            self.hide()
         else:
             QMessageBox.warning(self, "No Files Processed", "No files were successfully processed.")
 
     def open_nn_designer(self, filtered_files, dataset_folder):
         """
-        Open the Neural Network Designer window with the filtered dataset.
+        Open the Neural Network Designer window with the filtered dataset and the current state of the Dataset Builder.
 
         Args:
             filtered_files (list): List of filtered .h5 file names.
             dataset_folder (str): Path to the dataset folder.
         """
-        self.nn_designer_window = NeuralNetworkDesignerWindow(dataset_path=dataset_folder)
-        self.nn_designer_window.populate_file_list_with_paths(filtered_files)  # Pass filtered file names to NN Designer
+        # Get the current state of the Dataset Builder
+        saved_state = self.get_saved_state()  
+        self.nn_designer_window = NeuralNetworkDesignerWindow(
+            dataset_path=dataset_folder,
+            saved_state=saved_state
+        )
+        # Pass filtered file names to NN Designer
+        self.nn_designer_window.populate_file_list_with_paths(filtered_files)  
         self.nn_designer_window.showMaximized()
         self.hide()
 
@@ -571,12 +603,12 @@ class DatasetBuilderWindow(QMainWindow):
         # If search is empty, show all files
         if not search_text:
             self.file_list.clear()
-            sorted_files = sorted(self.all_files, key=self.extract_number)  
+            sorted_files = sorted(self.state["all_files"], key=self.extract_number)  
             self.file_list.addItems(sorted_files)
             return
 
         # Filter files containing the search text
-        filtered_files = [file for file in self.all_files if search_text in file]
+        filtered_files = [file for file in self.state["all_files"] if search_text in file]
         filtered_files = sorted(filtered_files, key=self.extract_number)
 
         # Update the list widget
@@ -601,7 +633,7 @@ class DatasetBuilderWindow(QMainWindow):
 
     def verify_files(self):
         """Show a dialog with the total count of files in the dataset."""
-        file_count = len(self.all_files)
+        file_count = len(self.state["all_files"])
         
         dialog = QDialog(self)
         dialog.setWindowTitle("File Verification")
@@ -618,45 +650,40 @@ class DatasetBuilderWindow(QMainWindow):
 
     def update_pagination_buttons(self):
         """Enable/disable pagination buttons based on current page position."""
-        total_pages = (len(self.all_files) + self.items_per_page - 1) // self.items_per_page
-        self.prev_button.setEnabled(self.current_page > 0)
-        self.next_button.setEnabled(self.current_page < total_pages - 1)
+        total_pages = (len(self.state["all_files"]) + self.items_per_page - 1) // self.items_per_page
+        self.prev_button.setEnabled(self.state["current_page"] > 0)
+        self.next_button.setEnabled(self.state["current_page"] < total_pages - 1)
 
     def show_page(self):
         """Display the current page of files in the list widget."""
-        if not self.all_files:
-            self.show_error_page("No files available.")
-            return
-            
-        start_index = self.current_page * self.items_per_page
-        end_index = start_index + self.items_per_page
-        files_to_display = self.all_files[start_index:end_index]
-        
         self.file_list.clear()
-        self.file_list.addItems(files_to_display)
+        start_index = self.state["current_page"] * self.items_per_page
+        end_index = start_index + self.items_per_page
+        page_files = self.state["all_files"][start_index:end_index]  # Slice the files for the current page
+        self.file_list.addItems(page_files)  # Add only the files for the current page
         self.update_pagination_buttons()
 
     def show_previous_page(self):
         """Navigate to the previous page of files."""
-        if self.current_page > 0:
-            self.current_page -= 1
+        if self.state["current_page"] > 0:
+            self.state["current_page"] -= 1
             self.show_page()
 
     def show_next_page(self):
         """Navigate to the next page of files."""
-        total_pages = (len(self.all_files) + self.items_per_page - 1) // self.items_per_page
-        if self.current_page < total_pages - 1:
-            self.current_page += 1
+        total_pages = (len(self.state["all_files"]) + self.items_per_page - 1) // self.items_per_page
+        if self.state["current_page"] < total_pages - 1:
+            self.state["current_page"] += 1
             self.show_page()
 
     def go_to_page(self):
         """Navigate to a specific page number entered by the user."""
         try:
             page_number = int(self.page_input.text()) - 1
-            total_pages = (len(self.all_files) + self.items_per_page - 1) // self.items_per_page
+            total_pages = (len(self.state["all_files"]) + self.items_per_page - 1) // self.items_per_page
             
             if 0 <= page_number < total_pages:
-                self.current_page = page_number
+                self.state["current_page"] = page_number
                 self.show_page()
             else:
                 self.show_error_page(f"Page {page_number + 1} does not exist.")
@@ -671,3 +698,21 @@ class DatasetBuilderWindow(QMainWindow):
             message (str): The error message to display
         """
         QMessageBox.warning(self, "Error", message)
+
+    def restore_state(self):
+        """Restore UI from saved state."""
+        # Restore file list
+        if self.state["all_files"]:
+            self.file_list.clear()
+            self.file_list.addItems(self.state["all_files"])
+
+        # Restore input checkboxes
+        for checkbox in self.emg_checkboxes + self.imu_checkboxes:
+            checkbox.setChecked(checkbox.text() in self.state["selected_inputs"])
+
+    def get_saved_state(self):
+        """
+        Get the current state including checkbox states.
+        """
+        self.state["selected_inputs"] = [cb.text() for cb in self.emg_checkboxes + self.imu_checkboxes if cb.isChecked()]
+        return self.state

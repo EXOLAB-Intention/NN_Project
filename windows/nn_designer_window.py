@@ -23,21 +23,44 @@ class NeuralNetworkDesignerWindow(QMainWindow):
     - Monitor training progress
     """
     
-    def __init__(self, dataset_path=None):
+    def __init__(self, dataset_path=None, saved_state=None):
         """
         Initialize the Neural Network Designer window.
         
         Args:
-            dataset_path (str): Path to the dataset directory (optional)
+            dataset_path (str): Path to the dataset directory 
+            saved_state (dict): A dictionary containing the saved state of the NN Designer.
         """
         super().__init__()
-        self.dataset_path = dataset_path  
-        self.setWindowTitle("Data Monitoring Software")         
-        self.resize(1000, 700)
-        self.training_stopped = False  
+        # Explicitly set dataset_path as an instance variable
+        self.dataset_path = dataset_path
 
-        # Initialize UI components
+        # Initialize with comprehensive default state
+        self.state = {
+            "optimizer": "Adam",
+            "loss_function": None,
+            "hyperparameters": {
+                "layer_number": "3",
+                "sequence_length": "50",
+                "batch_size": "32",
+                "epoch_number": "50"
+            },
+            "selected_files": [],
+            "dataset_path": dataset_path,
+            "summary_text": "No parameters saved yet"
+        }
+        
+        # Merge with saved state if exists
+        if saved_state:
+            self.state.update(saved_state)
+            # Ensure dataset_path is consistent with the saved state
+            self.dataset_path = self.state.get("dataset_path", self.dataset_path)
+        
         self.init_ui()
+        self.restore_state()
+        
+        # Ensure summary is always visible
+        self.update_summary_display()
 
     def init_ui(self):
         """Initialize all UI components of the window."""
@@ -62,6 +85,23 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         # Populate file list if dataset path was provided
         if self.dataset_path:
             self.populate_file_list()
+        
+        # Populate loss function combo boxes using the loss_function_categories dictionary
+        self.classification_loss_combo.addItems(self.loss_function_categories["Classification"])
+        self.regression_loss_combo.addItems(self.loss_function_categories["Regression"])
+        
+        # Set default selections
+        self.classification_loss_combo.setCurrentText("CrossEntropyLoss")
+        self.regression_loss_combo.setCurrentText("MSELoss")
+        
+        # Connect signals
+        self.classification_loss_combo.currentIndexChanged.connect(
+            lambda: self.on_loss_function_changed(is_classification=True))
+        self.regression_loss_combo.currentIndexChanged.connect(
+            lambda: self.on_loss_function_changed(is_classification=False))
+        
+        # Ensure mutual exclusivity for default selections
+        self.on_loss_function_changed(is_classification=True)
 
     def create_scrollable_container(self):
         """Create the scrollable main container for responsive layout."""
@@ -207,12 +247,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         self.main_layout.addLayout(content_layout)
 
     def create_file_selection_panel(self, parent_layout):
-        """
-        Create the left panel for file selection.
-        
-        Args:
-            parent_layout: The layout to add this panel to
-        """
+        """Create the left panel for file selection."""
         left_panel = QFrame()
         left_panel.setFrameShape(QFrame.StyledPanel)
         left_panel.setStyleSheet("background: white")
@@ -228,12 +263,8 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             padding: 4px;
         """)
         
-        # Populate with example files
-        for i in range(12):
-            item = QListWidgetItem(f"250501_walkingtest{i+1}.h5")
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Unchecked)
-            self.file_list.addItem(item)
+        # Connect the signal for checkbox state changes
+        self.file_list.itemChanged.connect(self.on_checkbox_changed)
             
         left_layout.addWidget(self.file_list)
 
@@ -244,6 +275,31 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         left_panel_layout.addWidget(left_panel)
         
         parent_layout.addWidget(left_panel_container, 1)
+
+    def on_checkbox_changed(self, item):
+        """Called automatically when a checkbox state changes."""
+        self.save_current_selections()
+        print(f"Checkbox changed: {item.text()} -> {'Checked' if item.checkState() == Qt.Checked else 'Unchecked'}")
+
+    def save_current_selections(self):
+        """Save the current state of checkboxes in real-time."""
+        self.state["selected_files"] = [
+            self.file_list.item(i).text()
+            for i in range(self.file_list.count())
+            if self.file_list.item(i).checkState() == Qt.Checked
+        ]
+        # Update the complete saved state
+        self.saved_state = self.get_saved_state()
+        print(f"Saved selected files: {self.state['selected_files']}")
+
+    def show_page(self):
+        """Display the current page of files in the list widget."""
+        self.file_list.clear()
+        for file_name in self.state["all_files"]:
+            item = QListWidgetItem(file_name)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if file_name in self.state["selected_files"] else Qt.Unchecked)
+            self.file_list.addItem(item)
 
     def create_nn_config_panel(self, parent_layout):
         """
@@ -264,32 +320,28 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             "Adam", "SGD", "AdamW"
         ])
 
-        # Initialize two loss combo boxes: one for Classification, one for Regression
-        self.classification_loss_combo = QComboBox()
-        self.regression_loss_combo = QComboBox()
-
-        # Define loss function categories
+        # Define loss function categories (single source of truth)
         self.loss_function_categories = {
-            "Classification": [
-                "CrossEntropyLoss","BCEWithLogitsLoss",
-            ],
-            "Regression": [
-                "MSELoss", "SmoothL1Loss", "HuberLoss",
-            ]
+            "Classification": ["CrossEntropyLoss", "BCEWithLogitsLoss"],
+            "Regression": ["MSELoss", "SmoothL1Loss", "HuberLoss"]
         }
 
-        # Populate loss function combos
-        for loss in self.loss_function_categories["Classification"]:
-            self.classification_loss_combo.addItem(loss)
-        for loss in self.loss_function_categories["Regression"]:
-            self.regression_loss_combo.addItem(loss)
+        # Populate loss function combos using the dictionary
+        self.classification_loss_combo = QComboBox()
+        self.regression_loss_combo = QComboBox()
+        self.classification_loss_combo.addItems(self.loss_function_categories["Classification"])
+        self.regression_loss_combo.addItems(self.loss_function_categories["Regression"])
+
+        # Set default values
+        self.classification_loss_combo.setCurrentText("CrossEntropyLoss")
+        self.regression_loss_combo.setCurrentText("MSELoss")
 
         # Ensure only one loss type is selected
         self.classification_loss_combo.currentIndexChanged.connect(
-            lambda i: self.regression_loss_combo.setCurrentIndex(-1) if i != -1 else None
+            lambda i: self.clear_regression_loss() if i != -1 else None
         )
         self.regression_loss_combo.currentIndexChanged.connect(
-            lambda i: self.classification_loss_combo.setCurrentIndex(-1) if i != -1 else None
+            lambda i: self.clear_classification_loss() if i != -1 else None
         )
 
         # Style for combo boxes
@@ -415,6 +467,14 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         middle_layout.addWidget(self.nn_text_edit, 1)
 
         parent_layout.addWidget(middle_panel, 1)
+
+    def clear_classification_loss(self):
+        """Clear the classification loss combo box selection."""
+        self.classification_loss_combo.setCurrentIndex(-1)
+
+    def clear_regression_loss(self):
+        """Clear the regression loss combo box selection."""
+        self.regression_loss_combo.setCurrentIndex(-1)
 
     def create_evaluation_panel(self, parent_layout):
         """
@@ -556,11 +616,20 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         self.top_right_label.setText(f"Progress Statement : {text}")
 
     def go_back_to_start(self):
-        """Return to the start window."""
-        self.hide()
-        from windows.start_window import StartWindow
-        self.start_window = StartWindow()
-        self.start_window.showMaximized()
+        """
+        Return to the Dataset Builder page, restoring the last state if available.
+        """
+        self.hide()  # Use hide instead of close to keep the application running
+        from windows.dataset_builder_window import DatasetBuilderWindow
+        
+        # Get the current state before switching
+        saved_state = self.get_saved_state()
+        
+        self.dataset_builder_window = DatasetBuilderWindow(
+            start_window_ref=None,
+            saved_state=saved_state  # Pass the saved state back to DatasetBuilderWindow
+        )
+        self.dataset_builder_window.showMaximized()
 
     def start_training(self):
         """Simulate the training process with a progress bar."""
@@ -586,10 +655,10 @@ class NeuralNetworkDesignerWindow(QMainWindow):
 
         # Simulate training progress
         for i in range(101):
-            if self.training_stopped:  # Check if training was stopped
+            if self.training_stopped:  
                 self.statusBar().showMessage("Training Model stopped.", 3000)
                 return
-            time.sleep(0.01)  # Simulate processing time
+            time.sleep(0.01) 
             progress.setValue(i)
             if progress.wasCanceled():
                 self.statusBar().showMessage("Training Model cancelled.", 3000)
@@ -597,6 +666,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
 
         self.statusBar().showMessage("Training Model successfully!", 3000)
         progress_state.nn_designed = True
+        progress_state.training_started = True  
         self.open_nn_evaluator()
 
     def stop_training(self):
@@ -628,92 +698,138 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         self.nn_evaluator_window.showMaximized()
 
     def save_hyperparameters(self):
-        """
-        Save the hyperparameters entered by the user.
-        Validates input and displays summary.
-        """
-        # Get values from input fields
-        layer_number = self.layer_number_input.text()
-        sequence_length = self.sequence_length_input.text()
-        batch_size = self.batch_size_input.text()
-        epoch_number = self.epoch_number_input.text()
-        optimizer = self.optimizer_combo.currentText().strip()
-        classification_loss = self.classification_loss_combo.currentText().strip()
-        regression_loss = self.regression_loss_combo.currentText().strip()
-
-        # Validate required fields
-        if not all([layer_number, sequence_length, batch_size, epoch_number, optimizer]):
-            QMessageBox.warning(
-                self,
-                "Incomplete Hyperparameters",
-                "Please fill in all hyperparameters before saving."
-            )
-            return
-
-        # Validate exactly one loss function is selected
-        if (not classification_loss and not regression_loss) or (classification_loss and regression_loss):
-            QMessageBox.warning(
-                self,
-                "Invalid Selection",
-                "Please select either a Classification loss or a Regression loss — not both."
-            )
-            return
-
-        # Determine which loss function was selected
-        if classification_loss:
-            loss_function = classification_loss
+        # Save current UI state
+        self.state["hyperparameters"] = {
+            "layer_number": self.layer_number_input.text(),
+            "sequence_length": self.sequence_length_input.text(),
+            "batch_size": self.batch_size_input.text(),
+            "epoch_number": self.epoch_number_input.text()
+        }
+        
+        self.state["optimizer"] = self.optimizer_combo.currentText()
+        
+        # Save loss function
+        if self.classification_loss_combo.currentIndex() >= 0:
+            self.state["loss_function"] = self.classification_loss_combo.currentText()
             loss_type = "Classification"
-        else:
-            loss_function = regression_loss
+        elif self.regression_loss_combo.currentIndex() >= 0:
+            self.state["loss_function"] = self.regression_loss_combo.currentText()
             loss_type = "Regression"
+        else:
+            self.state["loss_function"] = None
+            loss_type = "None"
+        
+        # Save checkbox states
+        self.state["selected_files"] = [
+            self.file_list.item(i).text() 
+            for i in range(self.file_list.count())
+            if self.file_list.item(i).checkState() == Qt.Checked
+        ]
+        
+        # Update summary text in state
+        self.state["summary_text"] = f"""Hyperparameters saved:
+• Optimizer: {self.state["optimizer"]}
+• Loss Function: {self.state["loss_function"]} ({loss_type})
+• Layers: {self.state["hyperparameters"]["layer_number"]}
+• Seq Length: {self.state["hyperparameters"]["sequence_length"]}
+• Batch Size: {self.state["hyperparameters"]["batch_size"]}
+• Epochs: {self.state["hyperparameters"]["epoch_number"]}
+• Selected Files: {len(self.state["selected_files"])}/{self.file_list.count()}"""
+        
+        self.update_summary_display()
+        progress_state.nn_designed = True
+        QMessageBox.information(self, "Saved", "The hyperparameters have been saved successfully!")
 
-        # Create summary text
+    def restore_state(self):
+        """Precisely restore all UI elements"""
+        # Restore parameters
+        hp = self.state["hyperparameters"]
+        self.layer_number_input.setText(hp["layer_number"])
+        self.sequence_length_input.setText(hp["sequence_length"])
+        self.batch_size_input.setText(hp["batch_size"])
+        self.epoch_number_input.setText(hp["epoch_number"])
+        
+        # Restore optimizer
+        if self.optimizer_combo.findText(self.state["optimizer"]) >= 0:
+            self.optimizer_combo.setCurrentText(self.state["optimizer"])
+        
+        # Restore loss function
+        if self.state["loss_function"]:
+            if self.classification_loss_combo.findText(self.state["loss_function"]) >= 0:
+                self.classification_loss_combo.setCurrentText(self.state["loss_function"])
+                self.regression_loss_combo.setCurrentIndex(-1)
+            elif self.regression_loss_combo.findText(self.state["loss_function"]) >= 0:
+                self.regression_loss_combo.setCurrentText(self.state["loss_function"])
+                self.classification_loss_combo.setCurrentIndex(-1)
+        
+        # Restore checkboxes after files load
+        QTimer.singleShot(100, self.restore_checkboxes)
+
+    def restore_checkboxes(self):
+        """Exactly restore previous checkbox states"""
+        if not hasattr(self, 'file_list'):
+            return
+            
+        # Create lookup for performance
+        selected_files_set = set(self.state["selected_files"])
+        
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            item.setCheckState(Qt.Checked if item.text() in selected_files_set else Qt.Unchecked)
+
+    def update_summary_display(self):
+        """Always keep summary updated with current state"""
+        self.nn_text_edit.setText(self.state["summary_text"])
+
+    def display_saved_summary(self):
+        """Display the saved summary in the TextEdit widget."""
+        if not (self.state["optimizer"] or self.state["loss_function"] or any(self.state["hyperparameters"].values())):
+            return
+            
+        loss_type = ""
+        if self.state["loss_function"]:
+            if self.state["loss_function"] in self.loss_function_categories["Classification"]:
+                loss_type = "Classification"
+            elif self.state["loss_function"] in self.loss_function_categories["Regression"]:
+                loss_type = "Regression"
+        
         summary = (
-            f"Hyperparameters saved:\n"
-            f"• Optimizer: {optimizer}\n"
-            f"• Loss Function: {loss_function} ({loss_type})\n"
-            f"• Layer Number: {layer_number}\n"
-            f"• Sequence Length: {sequence_length}\n"
-            f"• Batch Size: {batch_size}\n"
-            f"• Epoch Number: {epoch_number}"
+            f"Hyperparameters:\n"
+            f"• Optimizer: {self.state['optimizer'] or 'Not set'}\n"
+            f"• Loss Function: {self.state['loss_function'] or 'Not set'} {f'({loss_type})' if loss_type else ''}\n"
+            f"• Layer Number: {self.state['hyperparameters'].get('layer_number', 'Not set')}\n"
+            f"• Sequence Length: {self.state['hyperparameters'].get('sequence_length', 'Not set')}\n"
+            f"• Batch Size: {self.state['hyperparameters'].get('batch_size', 'Not set')}\n"
+            f"• Epoch Number: {self.state['hyperparameters'].get('epoch_number', 'Not set')}\n"
+            f"• Selected Files: {', '.join(self.state['selected_files']) if self.state['selected_files'] else 'None'}"
         )
-
-        # Display summary
+        
         self.nn_text_edit.setText(summary)
-        print(summary)
-
-        QMessageBox.information(
-            self, 
-            "Hyperparameters Saved", 
-            "The hyperparameters have been saved successfully."
-        )
+        print("Displayed saved summary")
 
     def auto_select_files(self):
-        """Automatically select a percentage of files for training."""
+        """Modified auto-select that immediately saves state without a pop-up."""
         try:
-            # Parse percentage input
-            percentage = float(self.training_percentage_input.text().strip().replace('%', ''))
-            if not (0 < percentage <= 100):
-                raise ValueError
-                
-            # Calculate number of files to select
+            percentage = int(self.training_percentage_input.text().strip('%'))
             total = self.file_list.count()
-            to_check = round((percentage / 100) * total)
+            to_select = max(1, int(total * percentage / 100))
             
-            # Get all items and randomly select the specified number
+            # Get all current items
             all_items = [self.file_list.item(i) for i in range(total)]
-            selected = random.sample(all_items, to_check)
             
-            # Update check states
+            # Random selection
+            selected = random.sample(all_items, to_select)
+            
+            # Update UI and state
+            self.state["selected_files"] = []
             for item in all_items:
-                item.setCheckState(Qt.Checked if item in selected else Qt.Unchecked)
-                
+                checked = item in selected
+                item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+                if checked:
+                    self.state["selected_files"].append(item.text())
+                    
         except ValueError:
-            QMessageBox.warning(
-                self, 
-                "Invalid Input", 
-                "Please enter a valid percentage between 0 and 100."
-            )
+            QMessageBox.warning(self, "Error", "Please enter a valid percentage")
 
     def populate_file_list(self):
         """
@@ -721,13 +837,15 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         Only called if dataset_path was provided during initialization.
         """
         self.file_list.clear()
-        if os.path.exists(self.dataset_path):
+        if self.dataset_path and os.path.exists(self.dataset_path):
             for filename in os.listdir(self.dataset_path):
                 if filename.endswith(".h5"):
                     item = QListWidgetItem(filename)
                     item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                     item.setCheckState(Qt.Unchecked)
                     self.file_list.addItem(item)
+        else:
+            QMessageBox.warning(self, "Error", "Dataset folder does not exist or is invalid.")
 
     def populate_file_list_with_paths(self, file_paths):
         """
@@ -742,3 +860,30 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
             self.file_list.addItem(item)
+
+    def get_saved_state(self):
+        """Return complete current state"""
+        return self.state
+
+    def on_loss_function_changed(self, is_classification):
+        """Handle when either loss function combo box changes."""
+        if is_classification:
+            # Classification loss was selected - clear regression
+            if self.classification_loss_combo.currentIndex() >= 0:
+                self.regression_loss_combo.blockSignals(True)  # Temporarily block signals
+                self.regression_loss_combo.setCurrentIndex(-1)
+                self.regression_loss_combo.blockSignals(False)  # Re-enable signals
+                self.state["loss_function"] = self.classification_loss_combo.currentText()
+        else:
+            # Regression loss was selected - clear classification
+            if self.regression_loss_combo.currentIndex() >= 0:
+                self.classification_loss_combo.blockSignals(True)  # Temporarily block signals
+                self.classification_loss_combo.setCurrentIndex(-1)
+                self.classification_loss_combo.blockSignals(False)  # Re-enable signals
+                self.state["loss_function"] = self.regression_loss_combo.currentText()
+
+    def clear_loss_function_selection(self):
+        """Clear both loss function selections"""
+        self.classification_loss_combo.setCurrentIndex(-1)
+        self.regression_loss_combo.setCurrentIndex(-1)
+        self.state["loss_function"] = None

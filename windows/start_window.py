@@ -7,6 +7,7 @@ from windows.add_data_window import AddDataWindow
 from windows.dataset_builder_window import DatasetBuilderWindow
 from windows.nn_designer_window import NeuralNetworkDesignerWindow  
 from widgets.header import Header
+import windows.progress_state as progress_state  # Add this import
 
 class StartWindow(QMainWindow):
     def __init__(self):
@@ -123,6 +124,9 @@ class StartWindow(QMainWindow):
         """
         Open the DatasetBuilderWindow for creating a new dataset.
         """
+        progress_state.dataset_built = False  # Reset progress state
+        progress_state.nn_designed = False
+        progress_state.training_started = False  # Reset training state
         self.dataset_builder = DatasetBuilderWindow(start_window_ref=self)  
         self.dataset_builder.showMaximized()
         self.hide()  
@@ -152,9 +156,18 @@ class StartWindow(QMainWindow):
         """
         Open the NeuralNetworkDesignerWindow with the given dataset folder.
         """
-        self.hide()  # Use hide instead of close to keep the application running
-        self.nn_designer_window = NeuralNetworkDesignerWindow(dataset_path=folder_path)
-        self.nn_designer_window.showMaximized()           
+        self.hide()  
+        progress_state.dataset_built = True 
+        self.nn_designer_window = NeuralNetworkDesignerWindow(
+            dataset_path=folder_path,
+            saved_state={
+                "dataset_path": folder_path,
+                "selected_folder": folder_path,  
+                "filtered_files": [f for f in os.listdir(folder_path) if f.endswith('.h5')]  
+            }
+        )
+        self.nn_designer_window.populate_file_list()  
+        self.nn_designer_window.showMaximized()
 
     def load_recent_folders(self):
         """
@@ -176,11 +189,18 @@ class StartWindow(QMainWindow):
 
     def update_recent_folders_list(self):
         """
-        Update the QListWidget to display the current recent folders.
+        Update the QListWidget to display the current recent folders with increased font size and padding.
         """
         self.recent_folders_list.clear()
+        self.recent_folders_list.setStyleSheet("""
+            QListWidget::item {
+                padding: 5px 30px;  
+            }
+        """)
         for folder in self.recent_folders:
             item = QListWidgetItem(folder)
+            font = QFont("Arial", 16)  
+            item.setFont(font)
             self.recent_folders_list.addItem(item)
 
     def add_to_recent_folders(self, folder):

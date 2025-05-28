@@ -10,14 +10,19 @@ from widgets.header import Header
 
 
 class NeuralNetworkEvaluator(QMainWindow):
-    def __init__(self):
+    def __init__(self, saved_state=None):
         """
         Initialize the Neural Network Evaluator window.
-        This window allows users to evaluate trained neural networks, visualize results, and compare models.
+
+        Args:
+            saved_state (dict): A dictionary containing the saved state of the NN Evaluator.
         """
         super().__init__()
         self.setWindowTitle("Data Monitoring Software")
         self.setGeometry(100, 100, 1200, 800)
+
+        # Restore saved state if provided
+        self.saved_state = saved_state or {}
 
         # Central widget and layout
         central_widget = QWidget()
@@ -401,7 +406,6 @@ class NeuralNetworkEvaluator(QMainWindow):
         )
         if file_path:
             print(f"Dataset loaded from: {file_path}")
-            # Add logic to process the dataset file here
 
     def save_dataset(self):
         """
@@ -430,7 +434,6 @@ class NeuralNetworkEvaluator(QMainWindow):
         )
         if file_path:
             print(f"Model loaded from: {file_path}")
-            # Add logic to process the model file here
 
     def save_model(self):
         """
@@ -657,3 +660,12 @@ class NeuralNetworkEvaluator(QMainWindow):
             if page:
                 page.updateGeometry()
         super().resizeEvent(event)
+
+    def get_saved_state(self):
+        """
+        Get the current state of the NN Evaluator.
+
+        Returns:
+            dict: A dictionary containing the current state of the evaluator.
+        """
+        return self.saved_state
