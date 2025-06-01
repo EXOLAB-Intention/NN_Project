@@ -1,5 +1,2 @@
-/Users/ngxthanhuyen/Documents/NN_Project/datasets/dataset1
-/Users/ngxthanhuyen/Documents/NN_Project
-/Users/ngxthanhuyen/Documents/NN_Project/data10
-/Users/ngxthanhuyen/Documents/NN_Project/sensor_data
-/Users/ngxthanhuyen/Downloads/Code/sample_h5_files
+C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN_Project/datasets/dataset1
+C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN_Project/datasets

@@ -8,8 +8,7 @@ from sklearn.utils import resample, shuffle
 from collections import Counter
 import os
 from tensorflow.keras.callbacks import Callback
-
-from tensorflow.keras.callbacks import Callback
+from PyQt5.QtCore import QThread, pyqtSignal
 
 class LoggingCallback(Callback):
     def __init__(self, log_callback, total_epochs):
@@ -669,13 +668,37 @@ def load_model_and_results(file_path):
 
 # === END OF MODULE ===
 
-class StopTrainingCallback(Callback):
-    def __init__(self, stop_flag_getter):
-        super().__init__()
-        self.stop_flag_getter = stop_flag_getter
+class TrainingThread(QThread):
+    training_finished = pyqtSignal(object, object, object)
+    training_log = pyqtSignal(str)
 
-    def on_epoch_end(self, epoch, logs=None):
-        if self.stop_flag_getter and self.stop_flag_getter():
-            print("🛑 Stopping training early via StopTrainingCallback.")
-            self.model.stop_training = True
+    def __init__(self, X_train, X_val, X_test, y_train, y_val, y_test, params, test_time=None, parent=None):
+        super().__init__(parent)
+        # ...existing code...
+        self._stop_flag = False
+
+    def run(self):
+        try:
+            # HARRY: Check stop flag before starting
+            if self._stop_flag:
+                return
+
+            # ...existing training code...
+            
+            # HARRY: Periodically check stop flag during training
+            if self._stop_flag:
+                self.training_log.emit("Training stopped by user")
+                return
+                
+        except Exception as e:
+            self.training_log.emit(f"Error during training: {str(e)}")
+        finally:
+            # HARRY: Ensure cleanup happens even if training fails
+            if self._stop_flag:
+                self.training_log.emit("Training cleanup completed")
+
+    def stop(self):
+        """HARRY: Enhanced stop mechanism"""
+        self._stop_flag = True
+        self.wait(1000)  # Wait up to 1 second for natural completion
 

@@ -79,15 +79,8 @@ class Header(QWidget):
             return  # Annule le retour
 
         if self.parent_window:
-            # Arrêt propre du thread d'entraînement s'il existe dans la fenêtre parente
             parent = self.parent_window.window()
-            if hasattr(parent, "train_thread") and parent.train_thread is not None:
-                if parent.train_thread.isRunning():
-                    parent.train_thread.stop()
-                    parent.train_thread.quit()
-                    parent.train_thread.wait()
-
-            parent = self.parent_window.window()
+            # HARRY: Cleanup training thread before closing
             if hasattr(parent, "cleanup_training_thread"):
                 parent.cleanup_training_thread()
 
@@ -143,11 +136,9 @@ class Header(QWidget):
                 current_window.train_thread.wait()
         
         current_window = self.parent_window.window()
-        # Arrêt propre du thread d'entraînement s'il existe
-        if hasattr(current_window, "train_thread") and current_window.train_thread is not None:
-            if current_window.train_thread.isRunning():
-                current_window.train_thread.quit()
-                current_window.train_thread.wait()
+        # HARRY: Cleanup training thread before closing
+        if hasattr(current_window, "cleanup_training_thread"):
+            current_window.cleanup_training_thread()
         
         # Get COMPLETE current state
         saved_state = current_window.get_saved_state() if hasattr(current_window, "get_saved_state") else {}

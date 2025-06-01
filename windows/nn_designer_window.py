@@ -1,7 +1,8 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QGridLayout,
     QPushButton, QComboBox, QTextEdit, QListWidget, QListWidgetItem, QProgressDialog,
-    QFrame, QMessageBox, QGroupBox, QScrollArea, QSizePolicy, QProgressBar,QStackedLayout, QFileDialog, 
+    QFrame, QMessageBox, QGroupBox, QScrollArea, QSizePolicy, QProgressBar,QStackedLayout, QFileDialog,
+    QApplication
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QIntValidator, QFont, QTextCursor, QIcon
@@ -78,6 +79,8 @@ class TrainingThread(QThread):
 class NeuralNetworkDesignerWindow(QMainWindow):
     def __init__(self, dataset_path=None, saved_state=None):
         super().__init__()
+        # HARRY: Register this window
+        QApplication.instance().register_window(self)
         self.dataset_path = dataset_path
         self.setWindowTitle("Data Monitoring Software")
         self.resize(1000, 700)
@@ -1093,29 +1096,32 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         self.top_right_label.setText(f"Progress Statement : {text}")
 
     def go_back(self):
-        """Go back to dataset builder while preserving state"""
+        """HARRY: Enhanced go_back method with proper parameter passing"""
         try:
             # Stop any running training thread
-            if hasattr(self, "train_thread") and self.train_thread.isRunning():
+            if hasattr(self, "train_thread") and self.train_thread and self.train_thread.isRunning():
                 self.train_thread.stop()
                 self.train_thread.wait()
 
             # Save current state before navigating
-            self.get_saved_state()
+            current_state = self.get_saved_state()
 
             # Import here to avoid circular imports
             from windows.dataset_builder_window import DatasetBuilderWindow
 
-            # Create dataset builder window with current state
+            # Create dataset builder window with both state and start_window_ref
             self.dataset_builder_window = DatasetBuilderWindow(
-                saved_state=self.state,
-                dataset_path=self.dataset_path
+                start_window_ref=None,  # HARRY: Pass None since we don't need it for back navigation
+                saved_state=current_state
             )
+            
+            # Hide current window and show new one
             self.hide()
             self.dataset_builder_window.showMaximized()
 
         except Exception as e:
             QMessageBox.critical(self, "Navigation Error", f"Failed to navigate back: {str(e)}")
+            print(f"Navigation error details: {e}")  # HARRY: Added for debugging
             self.show()  # Show the current window again if navigation failed
 
     def start_training(self):
@@ -1497,13 +1503,35 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save model:\n{str(e)}")
 
-    def closeEvent(self, event):
-        # Arrêt propre du thread d'entraînement si encore actif
+    def cleanup_training_thread(self):
+        """HARRY: Enhanced cleanup of training thread"""
         if hasattr(self, "train_thread") and self.train_thread is not None:
-            if self.train_thread.isRunning():
+            try:
+                # Stop the training first
                 self.train_thread.stop()
-                self.train_thread.quit()
-                self.train_thread.wait()
+                
+                # Wait for thread to finish with timeout
+                if self.train_thread.isRunning():
+                    self.train_thread.quit()
+                    if not self.train_thread.wait(5000):  # 5 second timeout
+                        print("Warning: Training thread timeout - forcing termination")
+                        self.train_thread.terminate()
+                        self.train_thread.wait()
+                
+                self.train_thread.deleteLater()
+                self.train_thread = None
+            except Exception as e:
+                print(f"Error during thread cleanup: {e}")
+
+    def closeEvent(self, event):
+        """HARRY: Enhanced window closing handler"""
+        # Clean up training thread
+        self.cleanup_training_thread()
+        
+        # Unregister from active windows
+        QApplication.instance().unregister_window(self)
+        
+        # Accept the close event
         event.accept()
 
     def restore_checkboxes(self):
@@ -1520,10 +1548,36 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                 tab_label.setEnabled(enabled)
 
     def cleanup_training_thread(self):
-        """Arrête proprement le thread d'entraînement s'il existe."""
+        """
+        HARRY: Enhanced cleanup of training thread
+        Ensures thread is properly stopped and cleaned up
+        """
         if hasattr(self, "train_thread") and self.train_thread is not None:
-            if self.train_thread.isRunning():
+            try:
+                # Stop the training
                 self.train_thread.stop()
-                self.train_thread.quit()
-                self.train_thread.wait()
-            self.train_thread = None
+                
+                # Force quit if still running
+                if self.train_thread.isRunning():
+                    self.train_thread.quit()
+                    
+                # Wait with timeout
+                if not self.train_thread.wait(3000):  # 3 second timeout
+                    print("Warning: Training thread did not stop properly")
+                    
+                # Ensure thread is finished
+                self.train_thread.terminate()
+                self.train_thread = None
+            except Exception as e:
+                print(f"Error during thread cleanup: {e}")
+
+    def closeEvent(self, event):
+        """
+        HARRY: Enhanced close event handler
+        Ensures cleanup happens before window closes
+        """
+        # Clean up training thread
+        self.cleanup_training_thread()
+        
+        # Accept the close event
+        event.accept()
