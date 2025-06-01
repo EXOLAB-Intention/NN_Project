@@ -1,2 +1,3 @@
+/Users/ngxthanhuyen/Documents/NN_Project/datasets/dataset2
 C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN_Project/datasets/dataset1
 C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN_Project/datasets
