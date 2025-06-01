@@ -79,6 +79,13 @@ class TrainingThread(QThread):
 class NeuralNetworkDesignerWindow(QMainWindow):
     def __init__(self, dataset_path=None, saved_state=None):
         super().__init__()
+        # HARRY: Initialize header attribute first
+        self.header = None
+        self.dataset_path = dataset_path
+        self.is_training = False
+        self.training_completed = False
+        self.training_stopped = False
+        
         # HARRY: Register this window
         QApplication.instance().register_window(self)
         self.dataset_path = dataset_path
@@ -109,8 +116,17 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         self.training_stopped = False
         
         self.init_ui()
+        
+        # HARRY: Ensure header is created after UI initialization
+        if not hasattr(self, 'header') or self.header is None:
+            self.create_header()
         self.restore_state()
         self.update_summary_display()
+
+        # HARRY: Add training state flag
+        self.is_training = False
+        # HARRY: Add completion flag
+        self.training_completed = False
 
     def restore_state(self):
         """Restore all UI elements from self.state."""
@@ -542,17 +558,26 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         self.setCentralWidget(scroll)
 
     def create_header(self):
-        """Create the application header with navigation."""
-        header_container = QWidget()
-        header_container_layout = QVBoxLayout(header_container)
-        header_container_layout.setContentsMargins(0, 0, 0, 0)  
-        header_container_layout.setSpacing(0)
-
-        # Add the header widget
-        header = Header(active_page="Neural Network Designer", parent_window=self)
-        header_container_layout.addWidget(header)
-
-        self.main_layout.addWidget(header_container, alignment=Qt.AlignTop)
+        """HARRY: Enhanced header creation with proper attribute setting"""
+        try:
+            header_container = QWidget()
+            header_layout = QVBoxLayout(header_container)
+            header_layout.setContentsMargins(0, 0, 0, 0)
+            header_layout.setSpacing(0)
+            
+            # Create and store header reference
+            self.header = Header(active_page="Neural Network Designer", parent_window=self)
+            header_layout.addWidget(self.header)
+            
+            # Add to main layout
+            if hasattr(self, 'main_layout'):
+                self.main_layout.addWidget(header_container, alignment=Qt.AlignTop)
+            else:
+                print("Warning: main_layout not found when creating header")
+                
+        except Exception as e:
+            print(f"Error creating header: {e}")
+            self.header = None
 
     def create_progress_indicator(self):
         """Create the progress indicator showing workflow steps."""
@@ -1125,14 +1150,21 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             self.show()  # Show the current window again if navigation failed
 
     def start_training(self):
-        """Lance l'entraînement réel du modèle dans un thread."""
+        """HARRY: Enhanced training start with better state and thread management"""
         try:
-            if hasattr(self, "train_thread") and self.train_thread.isRunning():
+            # Check if training is already running
+            if self.is_training:
+                QMessageBox.warning(self, "Training in Progress", "Training is already running!")
+                return
+
+            # Handle previous thread cleanup
+            if hasattr(self, "train_thread") and self.train_thread and self.train_thread.isRunning():
                 self.train_thread.stop()
                 if not self.train_thread.wait(1000):  # Wait 1 second
                     QMessageBox.warning(self, "Warning", "Previous training is still stopping, please wait")
                     return
-            
+
+            # Check if retraining
             if progress_state.nn_designed:
                 reply = QMessageBox.question(
                     self,
@@ -1143,45 +1175,35 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                 if reply == QMessageBox.No:
                     return
                 if hasattr(self, "eval_stack"):
-                    self.eval_stack.setCurrentIndex(0)  
-                
-            # 🛑 Vérifie si au moins une couche est définie
+                    self.eval_stack.setCurrentIndex(0)
+
+            # Reset training state
+            self.is_training = True
+            self.training_completed = False
+            self.training_stopped = False
+
+            # Validate layers and hyperparameters
             params, selected_files = self.get_training_parameters()
             if params is None or not params["layers"]:
                 QMessageBox.warning(self, "Missing Layers", "Please add at least one layer before starting training.")
+                self.is_training = False
                 return
 
-            # 🛑 Vérifie si les hyperparamètres sont définis
             if not hasattr(self, "hyperparams_saved") or not self.hyperparams_saved:
                 QMessageBox.warning(self, "Missing Parameters", "Please save your hyperparameters before starting training.")
+                self.is_training = False
                 return
 
-
-            # Si un training est déjà en cours, demander confirmation
-            if hasattr(self, "train_thread") and self.train_thread.isRunning():
-                msg_box = QMessageBox(self)
-                msg_box.setWindowTitle("Confirm Restart")
-                msg_box.setText("Training is already running. Do you want to restart it?")
-                msg_box.setIcon(QMessageBox.Warning)
-
-                cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
-                restart_btn = msg_box.addButton("Restart", QMessageBox.AcceptRole)
-                msg_box.setDefaultButton(cancel_btn)
-
-                msg_box.exec_()
-                if msg_box.clickedButton() != restart_btn:
-                    return
-
-                self.train_thread.stop()
-                self.train_thread.wait()
-
-            # Récupère les paramètres + fichiers cochés
-            params, selected_files = self.get_training_parameters()
-            if params is None or selected_files is None or not selected_files:
+            if not selected_files:
                 QMessageBox.warning(self, "No Files Selected", "Please select at least one .h5 file to train on.")
+                self.is_training = False
                 return
 
-            # Chargement des données
+            # Clear previous UI state
+            self.training_monitor_text.clear()
+            self.training_progress_bar.setValue(0)
+
+            # Load and prepare data
             X_all, y_all, time_all = [], [], []
             for fname in selected_files:
                 try:
@@ -1192,82 +1214,72 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                         stride=params["stride"]
                     )
 
-                    # 🔍 Vérification stricte
+                    # Validate data
                     if X is None or y is None or X.size == 0 or y.size == 0:
-                        print(f"⛔ Données vides ignorées : {fname}")
+                        print(f"⛔ Empty data ignored: {fname}")
                         continue
-
                     if full_time is None or not hasattr(full_time, "shape") or full_time.size == 0:
-                        print(f"⛔ Time manquant ou vide pour : {fname}")
+                        print(f"⛔ Missing or empty time data for: {fname}")
                         continue
-
                     if X.ndim < 2 or y.ndim < 1:
-                        print(f"⛔ Dimensions incorrectes : {fname}")
+                        print(f"⛔ Incorrect dimensions: {fname}")
                         continue
 
-                    # ✅ Si tout est OK, on ajoute
+                    # Add valid data
                     X_all.append(X)
                     y_all.append(y)
                     time_all.append(full_time)
-                    print(f"✅ Chargé : {fname} → X={X.shape}, y={y.shape}, time={full_time.shape}")
+                    print(f"✅ Loaded: {fname} → X={X.shape}, y={y.shape}, time={full_time.shape}")
 
                 except Exception as e:
                     QMessageBox.warning(self, "Error Loading File", f"Error in {fname}:\n{str(e)}")
                     continue
 
+            # Validate loaded data
             if not X_all or not y_all:
-                raise ValueError("Aucun fichier n’a pu être chargé correctement. Vérifie leur contenu.")
+                self.is_training = False
+                raise ValueError("No files could be loaded correctly. Check their content.")
+
+            # Combine data
             X = np.concatenate(X_all)
             y = np.concatenate(y_all)
-
-
-            # 🧼 Nettoyage des dimensions (évite erreurs concat)
             clean_time_all = [t.squeeze() if t.ndim > 1 else t for t in time_all if t is not None]
+            time = np.concatenate(clean_time_all) if clean_time_all else np.arange(len(y))
 
-            # ✅ Concatenate ou fallback vers un time de secours
-            if clean_time_all:
-                time = np.concatenate(clean_time_all)
-            else:
-                time = np.arange(len(y))  # fallback sécuritaire
-
-            # 🧪 Vérification
+            # Verify data shapes
             print("Shapes → X:", X.shape, "| y:", y.shape, "| time:", time.shape)
-            assert X.shape[0] == y.shape[0] == time.shape[0], "❌ Incohérence entre X, y et time"
+            assert X.shape[0] == y.shape[0] == time.shape[0], "❌ Inconsistency between X, y and time"
 
-            from sklearn.model_selection import train_test_split
-
-            # Split en 60% train, 20% val, 20% test
+            # Split data
             x_train_val, X_test, y_train_val, y_test, time_train_val, test_time = train_test_split(
                 X, y, time, test_size=0.2, random_state=42, shuffle=False
             )
-            print("🧪 Final test_time shape:", test_time.shape)
-            print("🧪 Final test_time first values:", test_time[:10])
-            print("🧪 Final test_time last values:", test_time[-10:])
-
             X_train, X_val, y_train, y_val, time_train, time_val = train_test_split(
                 x_train_val, y_train_val, time_train_val, test_size=0.25, random_state=42, shuffle=False
             )
 
-            # Création du thread avec le timestamp
+            # Initialize and start training thread
             self.train_thread = TrainingThread(
                 X_train, X_val, X_test,
                 y_train, y_val, y_test,
                 params=params,
-                test_time=test_time  # On passe explicitement le timestamp
+                test_time=test_time
             )
 
-
+            # Connect signals
             self.train_thread.setParent(self)
             self.train_thread.training_finished.connect(self.on_training_finished)
             self.train_thread.training_log.connect(self.append_training_log)
+            self.train_thread.finished.connect(self.on_thread_finished)
+
+            # Start training
             progress_state.nn_designed = False
             self.train_thread.start()
-
             self.nn_text_edit.setText("🧠 Training started...")
-            self.is_training = True  # Indique qu'un entraînement est en cours
 
         except Exception as e:
-            QMessageBox.critical(self, "Erreur durant l'entraînement", str(e))
+            self.is_training = False
+            QMessageBox.critical(self, "Training Error", str(e))
 
     def append_training_log(self, message):
         self.training_monitor_text.append(message)
@@ -1282,81 +1294,126 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             self.training_progress_bar.setValue(percent)
 
     def on_training_finished(self, model, history, test_results):
-        """
-        Callback when training is finished.
-        
-        Args:
-            model: The trained model
-            history: Training history
-            test_results: Dictionary with test results (accuracy, report)
-        """
-        if hasattr(self, "train_thread") and self.train_thread.isRunning():
-            print("Cleaning up training thread...")
-            self.train_thread.quit()
-            self.train_thread.wait()
-
-        self.is_training = False  # Indique qu'aucun entraînement n'est en cours
-        self.set_tabs_enabled(True)  # Réactive les onglets
-
-        if self.training_stopped:
-            self.nn_text_edit.setText("🛑 Training was manually stopped.")
-            progress_state.nn_designed = False
-            self.eval_stack.setCurrentIndex(0)  # Affiche placeholder (pas de plot)
-        else:
-            acc = test_results["accuracy"]
-            report = test_results["report"]
-            self.nn_text_edit.setText(f"✅ Training complete\n\nAccuracy: {acc:.3f}\n\n{report}")
-            QMessageBox.information(self, "Training Done", f"Model trained.\nTest accuracy: {acc:.2%}")
-            progress_state.nn_designed = True
+        """HARRY: Enhanced training completion handler with robust error handling and safe header management"""
+        try:
+            # Safely store results first
             self.trained_model = model
             self.training_history = history
             self.test_results = test_results
+            self.training_completed = True
             
-            # Fix the history keys debugging
-            print("DEBUG history keys:", history.history.keys() if history else "None")
-            
-            self.plot_training_curves(history)  # ✅ Affiche les courbes
+            # Then update flags and UI
+            self.is_training = False
+            self.training_progress_bar.setValue(100)
 
-            # ✅ STOP PROPRE DU THREAD !
-            if hasattr(self, "train_thread") and self.train_thread.isRunning():
-                self.train_thread.quit()
-                self.train_thread.wait()
+            # Now handle thread cleanup safely
+            if hasattr(self, "train_thread") and self.train_thread is not None:
+                try:
+                    if self.train_thread.isRunning():
+                        print("Cleaning up training thread...")
+                        self.train_thread.quit()
+                        self.train_thread.wait()
+                except Exception as thread_e:
+                    print(f"Thread cleanup error: {thread_e}")
+                finally:
+                    self.train_thread = None
 
-            progress_state.trained_model = model
-            progress_state.training_history = history
-            progress_state.test_results = test_results
-            progress_state.training_started = True
-            if test_results and "true_labels" in test_results and "predictions" in test_results:
-                progress_state.test_results["y_true"] = test_results["true_labels"]
-                progress_state.test_results["y_pred"] = test_results["predictions"]
+            # Handle stopped training case
+            if self.training_stopped:
+                self.nn_text_edit.setText("🛑 Training was manually stopped.")
+                progress_state.nn_designed = False
+                self.eval_stack.setCurrentIndex(0)
+                return
+
+            # Update UI with results
+            try:
+                acc = test_results["accuracy"]
+                report = test_results["report"]
+                self.nn_text_edit.setText(f"✅ Training complete\n\nAccuracy: {acc:.3f}\n\n{report}")
+                self.plot_training_curves(history)
+
+                # Update global progress state
+                progress_state.nn_designed = True
+                progress_state.trained_model = model
+                progress_state.training_history = history
+                progress_state.test_results = test_results
+                progress_state.training_started = True
+
+                # Save test results
+                if test_results and "true_labels" in test_results and "predictions" in test_results:
+                    progress_state.test_results["y_true"] = test_results["true_labels"]
+                    progress_state.test_results["y_pred"] = test_results["predictions"]
+                else:
+                    progress_state.test_results["y_true"] = []
+                    progress_state.test_results["y_pred"] = []
+
+                # Show completion message
+                QMessageBox.information(self, "Training Complete", 
+                    f"Model trained successfully.\nTest accuracy: {acc:.2%}\n\n"
+                    f"You can now view detailed results in the 'NN Evaluator' tab.")
+
+            except Exception as ui_e:
+                print(f"UI update error: {ui_e}")
+                raise
+
+            # Enable tabs only if header exists
+            if hasattr(self, 'header') and self.header is not None:
+                self.header.update_active_tab()
             else:
-                progress_state.test_results["y_true"] = []
-                progress_state.test_results["y_pred"] = []
-            QMessageBox.information(self, "Training Complete", "Training is finished. You can now view results in the 'NN Evaluator' tab.")
+                print("Warning: Header not available")
 
+        except Exception as e:
+            print(f"Error in training completion handler: {e}")
+            self.is_training = False
+            QMessageBox.warning(self, "Training Error", 
+                "Error processing training results. Some features may be unavailable.")
+            
+            # Try to recover the header if that's the issue
+            if not hasattr(self, 'header') or self.header is None:
+                try:
+                    self.create_header()
+                except Exception as header_e:
+                    print(f"Failed to recreate header: {header_e}")
+
+    def on_thread_finished(self):
+        """HARRY: Handle thread completion"""
+        self.is_training = False
+        if not self.training_completed:  # If training was stopped prematurely
+            self.append_training_log("Training stopped.")
+            self.training_progress_bar.setValue(0)
 
     def stop_training(self):
-        """Stop training with user confirmation."""
-        if hasattr(self, "train_thread") and self.train_thread.isRunning():
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle("Confirm Stop")
-            msg_box.setText("Are you sure you want to stop training?")
-            msg_box.setIcon(QMessageBox.Question)
-
-            # Boutons personnalisés
-            discard_button = msg_box.addButton("Cancel", QMessageBox.RejectRole)
-            yes_button = msg_box.addButton("Yes", QMessageBox.YesRole)
-            msg_box.setDefaultButton(discard_button)
-
-            msg_box.exec_()
-
-            if msg_box.clickedButton() == yes_button:
-                self.train_thread.stop()
+        """HARRY: Enhanced training stop with proper state management"""
+        if not self.is_training:
+            return
+        
+        reply = QMessageBox.question(
+            self, 
+            "Stop Training", 
+            "Are you sure you want to stop the training?",
+            QMessageBox.Yes | QMessageBox.No,
+            defaultButton=QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
                 self.training_stopped = True
-                QMessageBox.information(self, "Training Stopped", "Training was manually stopped.")
-                self.nn_text_edit.setText("Training was manually stopped.")
-            else:
-                print("Training stop cancelled.")
+                self.cleanup_training_thread()
+                self.is_training = False
+                self.training_completed = False
+                
+                # Update UI
+                self.training_progress_bar.setValue(0)
+                self.append_training_log("Training stopped by user.")
+                self.nn_text_edit.setText("🛑 Training was manually stopped.")
+                
+                QMessageBox.information(self, "Training Stopped", 
+                    "Training process has been stopped.")
+                    
+            except Exception as e:
+                print(f"Error stopping training: {e}")
+                QMessageBox.warning(self, "Error", 
+                    f"Error while stopping training: {str(e)}")
 
     def auto_select_files(self):
         """Automatically select a percentage of files for training."""
@@ -1504,24 +1561,40 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to save model:\n{str(e)}")
 
     def cleanup_training_thread(self):
-        """HARRY: Enhanced cleanup of training thread"""
+        """HARRY: Enhanced cleanup with comprehensive state management and error handling"""
         if hasattr(self, "train_thread") and self.train_thread is not None:
             try:
-                # Stop the training first
+                # First attempt graceful stop
                 self.train_thread.stop()
                 
-                # Wait for thread to finish with timeout
                 if self.train_thread.isRunning():
+                    # Request thread termination
                     self.train_thread.quit()
-                    if not self.train_thread.wait(5000):  # 5 second timeout
+                    
+                    # Wait with timeout (5 seconds)
+                    if not self.train_thread.wait(5000):
                         print("Warning: Training thread timeout - forcing termination")
                         self.train_thread.terminate()
-                        self.train_thread.wait()
+                        self.train_thread.wait(1000)  # Short wait after force
                 
-                self.train_thread.deleteLater()
-                self.train_thread = None
+                    # Cleanup Qt object
+                    self.train_thread.deleteLater()
+                    self.train_thread = None
+                    
+                    # Reset state flags
+                    self.is_training = False
+                    if not self.training_completed:
+                        self.training_stopped = True
+                        
             except Exception as e:
                 print(f"Error during thread cleanup: {e}")
+                # Try force cleanup in case of error
+                try:
+                    if self.train_thread and self.train_thread.isRunning():
+                        self.train_thread.terminate()
+                        self.train_thread = None
+                except:
+                    pass
 
     def closeEvent(self, event):
         """HARRY: Enhanced window closing handler"""
