@@ -68,11 +68,33 @@ class Header(QWidget):
         self.update_active_tab()
 
     def on_logo_clicked(self):
-    # Open StartWindow and close current window
+        # Demande de confirmation avant retour au StartWindow
+        reply = QMessageBox.question(
+            self,
+            "Confirm Return",
+            "Are you sure you want to return to the start? All unsaved progress will be lost.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.No:
+            return  # Annule le retour
+
         if self.parent_window:
+            # Arrêt propre du thread d'entraînement s'il existe dans la fenêtre parente
+            parent = self.parent_window.window()
+            if hasattr(parent, "train_thread") and parent.train_thread is not None:
+                if parent.train_thread.isRunning():
+                    parent.train_thread.stop()
+                    parent.train_thread.quit()
+                    parent.train_thread.wait()
+
+            parent = self.parent_window.window()
+            if hasattr(parent, "cleanup_training_thread"):
+                parent.cleanup_training_thread()
+
             from windows.start_window import StartWindow
             start_window = StartWindow()
             start_window.showMaximized()
+
             self.parent_window.window().close()
         
     def create_tab(self, name):
@@ -104,8 +126,28 @@ class Header(QWidget):
         container.setFixedHeight(tab_label.sizeHint().height() + 5)
         return container
     
+    def set_tabs_enabled(self, enabled: bool):
+        """Enable or disable tabs based on the training state."""
+        for tab in self.tabs.values():
+            tab_label = tab.layout().itemAt(0).widget()
+            tab_label.setEnabled(enabled)
+
     def on_tab_clicked(self, tab_name):
+        if hasattr(self.parent_window, "is_training") and self.parent_window.is_training:
+            QMessageBox.warning(self, "Training in progress", "Please wait for training to finish before navigating.")
+            return
         current_window = self.parent_window.window()
+        if hasattr(current_window, "train_thread") and current_window.train_thread is not None:
+            if current_window.train_thread.isRunning():
+                current_window.train_thread.quit()
+                current_window.train_thread.wait()
+        
+        current_window = self.parent_window.window()
+        # Arrêt propre du thread d'entraînement s'il existe
+        if hasattr(current_window, "train_thread") and current_window.train_thread is not None:
+            if current_window.train_thread.isRunning():
+                current_window.train_thread.quit()
+                current_window.train_thread.wait()
         
         # Get COMPLETE current state
         saved_state = current_window.get_saved_state() if hasattr(current_window, "get_saved_state") else {}
@@ -128,8 +170,12 @@ class Header(QWidget):
             if not progress_state.training_started:
                 QMessageBox.warning(self, "Warning", "You must complete training first")
                 return
-            from windows.nn_evaluator_window import NeuralNetworkEvaluator
-            new_window = NeuralNetworkEvaluator()
+            if not hasattr(self.parent_window, "nn_evaluator_window") or self.parent_window.nn_evaluator_window is None:
+                from windows.nn_evaluator_window import NeuralNetworkEvaluator
+                self.parent_window.nn_evaluator_window = NeuralNetworkEvaluator(saved_state=saved_state)
+                self.parent_window.nn_evaluator_window.parent_window = self.parent_window
+
+            new_window = self.parent_window.nn_evaluator_window
         else:
             QMessageBox.warning(self, "Error", f"Unsupported tab: {tab_name}")
             return

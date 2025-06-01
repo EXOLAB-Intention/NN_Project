@@ -1,13 +1,14 @@
 import os
-from PyQt5.QtWidgets import QMainWindow, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QFileDialog, QAction, QListWidgetItem
+from PyQt5.QtWidgets import QMainWindow, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QFileDialog, QAction, QListWidgetItem, QMessageBox
 from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtCore import QSize, Qt
+from tensorflow.keras.models import load_model
 
-from windows.add_data_window import AddDataWindow
 from windows.dataset_builder_window import DatasetBuilderWindow
 from windows.nn_designer_window import NeuralNetworkDesignerWindow  
+from windows.nn_evaluator_window import NeuralNetworkEvaluator
 from widgets.header import Header
-import windows.progress_state as progress_state  # Add this import
+import windows.progress_state as progress_state
 
 class StartWindow(QMainWindow):
     def __init__(self):
@@ -76,6 +77,7 @@ class StartWindow(QMainWindow):
 
         btn_new.clicked.connect(self.create_new_dataset)
         btn_open.clicked.connect(self.open_dataset)
+        btn_load.clicked.connect(self.load_existing_model)
 
         btn_layout.addWidget(btn_new)
         btn_layout.addWidget(btn_open)
@@ -127,9 +129,11 @@ class StartWindow(QMainWindow):
         progress_state.dataset_built = False  # Reset progress state
         progress_state.nn_designed = False
         progress_state.training_started = False  # Reset training state
+        self.set_tabs_enabled(False)  # Disable tabs during dataset creation
         self.dataset_builder = DatasetBuilderWindow(start_window_ref=self)  
         self.dataset_builder.showMaximized()
-        self.hide()  
+        self.hide()
+        self.set_tabs_enabled(True)  # Re-enable tabs after dataset creation
 
     def open_dataset(self):
         """
@@ -215,7 +219,25 @@ class StartWindow(QMainWindow):
         self.update_recent_folders_list()
 
     def load_existing_model(self):
-        """
-        Placeholder for loading an existing model (to be implemented).
-        """
-        print("Load existing model...")
+        """Load a previously trained model and open it in the NN Evaluator window."""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File", "", "H5 Files (*.h5)")
+        if not file_path:
+            return
+
+        try:
+            self.set_tabs_enabled(False)  # Disable tabs during model loading
+            model = load_model(file_path)
+            progress_state.nn_designed = True
+            self.nn_evaluator_window = NeuralNetworkEvaluator()
+            self.nn_evaluator_window.model = model
+            self.nn_evaluator_window.showMaximized()
+            self.hide()
+            self.set_tabs_enabled(True)  # Re-enable tabs after model loading
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load model:\n{str(e)}")
+
+    def set_tabs_enabled(self, enabled: bool):
+        """Enable or disable tabs in the header."""
+        if hasattr(self, "header"):
+            self.header.set_tabs_enabled(enabled)
+

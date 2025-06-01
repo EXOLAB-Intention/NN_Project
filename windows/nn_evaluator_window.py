@@ -1,28 +1,40 @@
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QGridLayout, QLabel, QWidget, QSpacerItem, QSizePolicy, QFileDialog, QPushButton, QHBoxLayout, QStackedWidget, QComboBox
 )
+from PyQt5.QtCore import QSize
+import os
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtGui import QPixmap, QColor
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from windows.dataset_builder_window import DatasetBuilderWindow
+import numpy as np
 from widgets.header import Header 
+import windows.progress_state as progress_state
+import matplotlib.pyplot as plt
 
+int_to_phase = {
+    0: 'Stand',
+    1: 'Stand-to-Sit',
+    2: 'Sit',
+    3: 'Sit-to-Stand',
+    4: 'Stand-to-Walk',
+    5: 'Walk',
+    6: 'Walk-to-Stand'
+}
 
 class NeuralNetworkEvaluator(QMainWindow):
     def __init__(self, saved_state=None):
         """
         Initialize the Neural Network Evaluator window.
-
-        Args:
-            saved_state (dict): A dictionary containing the saved state of the NN Evaluator.
+        This window allows users to evaluate trained neural networks, visualize results, and compare models.
         """
+        
         super().__init__()
         self.setWindowTitle("Data Monitoring Software")
         self.setGeometry(100, 100, 1200, 800)
-
-        # Restore saved state if provided
-        self.saved_state = saved_state or {}
+        
+        self.test_results = progress_state.test_results
 
         # Central widget and layout
         central_widget = QWidget()
@@ -116,6 +128,7 @@ class NeuralNetworkEvaluator(QMainWindow):
 
         # Add menu bar
         self.add_menu_bar()
+        self.state = saved_state or {}
 
     def update_progress_label(self, active_step, completed_steps=None):
         """
@@ -280,113 +293,110 @@ class NeuralNetworkEvaluator(QMainWindow):
         Add the Training Overview page to the stacked widget.
         This page displays training results and visualizations.
         """
-        page = QWidget()
-        layout = QVBoxLayout()
-        layout.setContentsMargins(20, 20, 20, 20)
+        from PyQt5.QtWidgets import QScrollArea, QFrame
 
-        # Add the "Load Model" button
-        load_model_button = QPushButton("Load Model")
-        load_model_button.setStyleSheet("""
-            QPushButton {
-                background-color: #e7f3ff;
-                border: 1px solid #a6c8ff;
-                border-radius: 5px;
-                font-size: 16px;
-                padding: 12px;
-                min-width: 150px;
-            }
-            QPushButton:hover {
-                background-color: #d0e7ff;
-            }
-            QPushButton:pressed {
-                background-color: #b3d4ff;
-            }
-        """)
-        load_model_button.clicked.connect(self.load_existing_model)
-        layout.addWidget(load_model_button, alignment=Qt.AlignLeft)
+        # Create a scrollable page
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)  # Remove border
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # Disable horizontal scroll
 
-        # Create a horizontal layout for the plots
-        plots_layout = QHBoxLayout()
-        plots_layout.setSpacing(20)  # Add spacing between the plots
+        # Main container widget
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(30, 0, 30, 0)  
+        container_layout.setSpacing(20)
 
-        # Add the Ground Truth vs Prediction plot
-        ground_truth_container = QWidget()
-        ground_truth_layout = QVBoxLayout()
-        ground_truth_container.setLayout(ground_truth_layout)
-        ground_truth_container.setStyleSheet("background-color: white; padding: 10px;")  # Removed border
+        # Create a centered content widget
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)  
 
-        ground_truth_plot = FigureCanvas(Figure(figsize=(6, 4)))  
-        self.add_ground_truth_vs_prediction(ground_truth_plot.figure)
-        ground_truth_layout.addWidget(ground_truth_plot)
-        plots_layout.addWidget(ground_truth_container, stretch=3)  # Stretch factor for left plot
+        # First plot - Prediction vs Ground Truth
+        plot1_canvas = FigureCanvas(Figure(figsize=(10, 6)))  # Slightly reduced width
+        fig1 = plot1_canvas.figure
+        self.plot_prediction_and_curves(fig1)
+        
+        # Adjust layout with more padding
+        fig1.tight_layout(pad=4.0)
+        plot1_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        # Create a container with padding
+        plot1_container = QWidget()
+        plot1_container.setMinimumHeight(500)
+        plot1_container_layout = QHBoxLayout(plot1_container)
+        plot1_container_layout.setContentsMargins(20, 20, 20, 20)  # Padding around plot
+        plot1_container_layout.addWidget(plot1_canvas)
+        plot1_container.setMaximumWidth(1800)  # Reduced maximum width
+        content_layout.addWidget(plot1_container, 0, Qt.AlignCenter)
 
-        # Add the Predicted vs Ground Truth plot
-        predicted_vs_ground_truth_container = QWidget()
-        predicted_vs_ground_truth_layout = QVBoxLayout()
-        predicted_vs_ground_truth_container.setLayout(predicted_vs_ground_truth_layout)
-        predicted_vs_ground_truth_container.setStyleSheet("background-color: white; padding: 10px;")  # Removed border
+        # Second plot - Scatter plot with better label handling
+        plot2_canvas = FigureCanvas(Figure(figsize=(10, 6)))  # Slightly reduced width
+        fig2 = plot2_canvas.figure
+        self.prediction_scatter_plot_canvas(fig2)
+        
+        # Adjust x-axis labels and layout
+        ax2 = fig2.gca()
+        labels = [label.replace("-", "-\n") if "-" in label else label for label in [item.get_text() for item in ax2.get_xticklabels()]]
+        ax2.set_xticklabels(ax2.get_xticklabels(), rotation=0)  # 0 degree rotation
+        
+        # Add more padding at the bottom for labels
+        fig2.subplots_adjust(bottom=0.1)
+        fig2.tight_layout(pad=4.0)
+        
+        plot2_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        # Create a container with padding
+        plot2_container = QWidget()
+        plot2_container.setMinimumHeight(500)
+        plot2_container_layout = QHBoxLayout(plot2_container)
+        plot2_container_layout.setContentsMargins(20, 20, 20, 30)  # Extra bottom padding for labels
+        plot2_container_layout.addWidget(plot2_canvas)
+        plot2_container.setMaximumWidth(1800)  
+        content_layout.addWidget(plot2_container, 0, Qt.AlignCenter)
 
-        predicted_vs_ground_truth_plot = FigureCanvas(Figure(figsize=(4, 4)))  # Smaller plot
-        self.add_predicted_vs_ground_truth(predicted_vs_ground_truth_plot.figure)
-        predicted_vs_ground_truth_layout.addWidget(predicted_vs_ground_truth_plot)
-        plots_layout.addWidget(predicted_vs_ground_truth_container, stretch=2)  # Stretch factor for right plot
+        # Add stretch to push content up
+        content_layout.addStretch()
 
-        # Add the horizontal layout with plots to the main layout
-        layout.addLayout(plots_layout)
+        # Add the content widget to the container with centering
+        container_layout.addWidget(content_widget, 0, Qt.AlignCenter)
+        container_layout.addStretch()
 
-        # Set the layout for the page
-        page.setLayout(layout)
-        self.stacked_widget.addWidget(page)
+        # Set the container as the scroll area's widget
+        scroll_area.setWidget(container)
 
-    def add_ground_truth_vs_prediction(self, figure):
-        """
-        Add the Ground Truth vs Prediction plot to the given figure.
+        # Add the scroll area to the stacked widget
+        self.stacked_widget.addWidget(scroll_area)
 
-        Args:
-            figure (Figure): Matplotlib figure to add the plot to.
-        """
-        ax = figure.add_subplot(111)
-        # Simulated data for Ground Truth and Prediction
-        x = range(0, 1600, 10)
-        ground_truth = [2 * (i % 100) / 100 - 1 for i in x]  # Simulated sine-like data
-        prediction = [gt + (0.1 * (-1) ** i) for i, gt in enumerate(ground_truth)]  # Slightly noisy prediction
+        # Adjust the figure margins when resized
+        def resize_plots():
+            # First plot adjustments
+            fig1 = plot1_canvas.figure
+            fig1.tight_layout(pad=3.0)
+            
+            # Second plot adjustments
+            fig2 = plot2_canvas.figure
+            ax2 = fig2.gca()
+            labels = [label.replace("-", "-\n") if "-" in label else label for label in [item.get_text() for item in ax2.get_xticklabels()]]
+            ax2.set_xticklabels(labels, rotation=45, ha='right', rotation_mode='anchor')
+            fig2.subplots_adjust(bottom=0.25)
+            fig2.tight_layout(pad=3.0)
+            
+            plot1_canvas.draw()
+            plot2_canvas.draw()
 
-        ax.plot(x, ground_truth, label="Ground Truth", color="blue", linewidth=1.5)
-        ax.plot(x, prediction, label="Prediction", color="orange", linestyle="--", linewidth=1.5)
-        ax.set_title("Ground Truth vs Prediction", fontsize=14)
-        ax.set_xlabel("Frame", fontsize=12)
-        ax.set_ylabel("Forward Speed (m/s)", fontsize=12)
-        ax.legend(fontsize=10, loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=2)  # Move legend closer to the plot
-        ax.grid(True)
+        # Install an event filter for the scroll area
+        scroll_area.viewport().installEventFilter(self)
 
-        # Adjust margins to reduce the bottom space
-        figure.subplots_adjust(left=0.15, right=0.95, top=0.9, bottom=0.2)  # Reduced bottom margin
-
-    def add_predicted_vs_ground_truth(self, figure):
-        """
-        Add the Predicted vs Ground Truth scatter plot to the given figure.
-
-        Args:
-            figure (Figure): Matplotlib figure to add the plot to.
-        """
-        ax = figure.add_subplot(111)
-        # Simulated data for scatter plot
-        import numpy as np
-        ground_truth = np.linspace(-2, 3, 200)
-        prediction = ground_truth + np.random.normal(0, 0.2, size=ground_truth.shape)
-
-        ax.scatter(ground_truth, prediction, label="Data", alpha=0.7, color="blue")
-        ax.plot([-2, 3], [-2, 3], linestyle="--", color="black", label="Ideal", linewidth=1.5)
-        ax.set_title("Predicted vs Ground Truth", fontsize=14)
-        ax.set_xlabel("Ground Truth (m/s)", fontsize=12)
-        ax.set_ylabel("Prediction (m/s)", fontsize=12)
-        ax.legend(fontsize=10)
-        ax.grid(True)
+        # Store the resize callback
+        self.resize_callback = resize_plots
 
     def create_new_dataset(self):
         """
         Open the DatasetBuilderWindow to create a new dataset.
         """
+        from windows.dataset_builder_window import DatasetBuilderWindow
         self.dataset_builder = DatasetBuilderWindow(start_window_ref=self)
         self.dataset_builder.show()
         self.close()
@@ -406,6 +416,7 @@ class NeuralNetworkEvaluator(QMainWindow):
         )
         if file_path:
             print(f"Dataset loaded from: {file_path}")
+            # Add logic to process the dataset file here
 
     def save_dataset(self):
         """
@@ -434,6 +445,7 @@ class NeuralNetworkEvaluator(QMainWindow):
         )
         if file_path:
             print(f"Model loaded from: {file_path}")
+            # Add logic to process the model file here
 
     def save_model(self):
         """
@@ -448,98 +460,141 @@ class NeuralNetworkEvaluator(QMainWindow):
         print("Saving the current model as...")
 
     def add_evaluate_test_set_page(self):
-        """
-        Add the Evaluate on Test Set page to the stacked widget.
-        This page allows users to evaluate the model on a test dataset.
-        """
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+        from matplotlib.figure import Figure
+        from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, mean_squared_error, accuracy_score
+        import numpy as np
+
         page = QWidget()
         layout = QVBoxLayout()
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(20, 20, 20, 0)
 
         # Main grid layout
         main_grid = QGridLayout()
-        main_grid.setHorizontalSpacing(20)  
-        main_grid.setVerticalSpacing(10)   
-        main_grid.setContentsMargins(10, 10, 10, 10) 
+        main_grid.setHorizontalSpacing(10)
+        main_grid.setVerticalSpacing(10)
+        main_grid.setContentsMargins(50, 10, 20, 10)  
 
-        # Classification Section
+        # === Data
+        y_true = np.array(self.test_results.get("y_true", []))
+        y_pred = np.array(self.test_results.get("y_pred", []))
+
+        # === Metrics
+        if len(y_true) > 0 and len(y_pred) > 0:
+            try:
+                acc = accuracy_score(y_true, y_pred)
+            except:
+                acc = 0.0
+            try:
+                mse = mean_squared_error(y_true, y_pred)
+                rmse = np.sqrt(mse)
+            except:
+                mse = rmse = 0.0
+        else:
+            acc = mse = rmse = 0.0
+
+        # === Classification Section (moved left 50px)
         classification_label = QLabel("<b><i>Classification</i></b>")
         classification_label.setAlignment(Qt.AlignLeft)
-        classification_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred) 
-        main_grid.addWidget(classification_label, 0, 0, 1, 2)
+        classification_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        classification_label.setContentsMargins(-50, 0, 0, 0)  
+        classification_label.setStyleSheet("font-size: 17px;")  
+        main_grid.addWidget(classification_label, 0, 0, 1, 1)
 
-        # Accuracy row
-        accuracy_label = QLabel("<b><i>Accuracy</i></b>")
-        accuracy_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)  
-        accuracy_value = QLabel("99.8%")
-        accuracy_value.setStyleSheet("border: 1px solid gray; padding: 2px; background-color: white; font-size: 10px;")
-        accuracy_value.setFixedSize(80, 30)  
-        main_grid.addWidget(accuracy_label, 1, 0, alignment=Qt.AlignRight)  
-        main_grid.addWidget(accuracy_value, 1, 1, alignment=Qt.AlignLeft)  
-
-        main_grid.addItem(QSpacerItem(20, 10, QSizePolicy.Expanding, QSizePolicy.Minimum), 1, 2)
+        # Accuracy row - using a single cell with horizontal layout
+        accuracy_layout = QHBoxLayout()
+        accuracy_layout.setSpacing(20)  # Increased spacing between label and value box
+        accuracy_layout.setContentsMargins(50, 0, 0, 0)  # Align with other metrics
+    
+        accuracy_label = QLabel("<b><i>Accuracy:</i></b>")
+        accuracy_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        accuracy_value = QLabel(f"{acc*100:.2f} %")
+        accuracy_value.setStyleSheet("border: 1px solid gray; padding: 2px; background-color: white;")
+        accuracy_value.setFixedSize(80, 25)  
+    
+        accuracy_layout.addWidget(accuracy_label)
+        accuracy_layout.addWidget(accuracy_value)
+        accuracy_layout.addStretch()  
+        main_grid.addLayout(accuracy_layout, 1, 0)
+        
+        # Put label and value in same cell with horizontal layout
+        accuracy_layout = QHBoxLayout()
+        accuracy_layout.addWidget(accuracy_label)
+        accuracy_layout.addWidget(accuracy_value)
+        accuracy_layout.setSpacing(5)
+        accuracy_layout.setContentsMargins(50, 0, 0, 0)  
+        main_grid.addLayout(accuracy_layout, 1, 0, 1, 2)
 
         # Confusion Matrix row
         confusion_matrix_label = QLabel("<b><i>Confusion matrix</i></b>")
-        confusion_matrix_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)  
-        confusion_matrix_button = QPushButton("Visualize confusion matrix")
-        confusion_matrix_button.setFixedSize(120, 120)  
-        confusion_matrix_button.setStyleSheet("""
-            QPushButton {
-                background-color: #add8e6;
-                border: 1px solid #000;
-                font-size: 10px;
-                padding: 2px;
-            }
-            QPushButton:hover {
-                background-color: #87ceeb;
-            }
-        """)
-        main_grid.addWidget(confusion_matrix_label, 2, 0, alignment=Qt.AlignRight)  
-        main_grid.addWidget(confusion_matrix_button, 2, 1, alignment=Qt.AlignLeft)  
+        confusion_matrix_label.setAlignment(Qt.AlignLeft)
+        confusion_matrix_label.setContentsMargins(50, 0, 0, 0)  
+        main_grid.addWidget(confusion_matrix_label, 2, 0, 1, 2)
 
-        main_grid.addItem(QSpacerItem(20, 10, QSizePolicy.Expanding, QSizePolicy.Minimum), 2, 2)
+        if len(y_true) > 0 and len(y_pred) > 0:
+            cm_canvas = self.plot_confusion_matrix(y_true, y_pred)
+            cm_canvas.setContentsMargins(50, 0, 0, 0)  
+            main_grid.addWidget(cm_canvas, 3, 0, 1, 2, alignment=Qt.AlignLeft)
+        else:
+            no_data_label = QLabel("Confusion matrix not available.")
+            no_data_label.setContentsMargins(50, 0, 0, 0)
+            main_grid.addWidget(no_data_label, 3, 0, 1, 2)
 
-        # Regression Section
+        # === Regression Section (moved left 50px)
         regression_label = QLabel("<b><i>Regression</b></i>")
         regression_label.setAlignment(Qt.AlignLeft)
-        regression_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)  
-        main_grid.addWidget(regression_label, 3, 0, 1, 2)
+        regression_label.setContentsMargins(-50, 0, 0, 0)  
+        regression_label.setStyleSheet("font-size: 17px;")  
+        main_grid.addWidget(regression_label, 4, 0, 1, 1)
 
         # MSE row
-        mse_label = QLabel("<b><i>MSE</i></b>")
-        mse_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)  
-        mse_value = QLabel("99.8%")
-        mse_value.setStyleSheet("border: 1px solid gray; padding: 2px; background-color: white; font-size: 10px;")
-        mse_value.setFixedSize(80, 30)  
-        main_grid.addWidget(mse_label, 4, 0, alignment=Qt.AlignRight)  
-        main_grid.addWidget(mse_value, 4, 1, alignment=Qt.AlignLeft) 
+        mse_layout = QHBoxLayout()
+        mse_layout.setSpacing(20)  # Increased spacing between label and value box
+        mse_layout.setContentsMargins(50, 0, 0, 0)
+    
+        mse_label = QLabel("<b><i>MSE:</i></b>")
+        mse_value = QLabel(f"{mse:.4f}")
+        mse_value.setStyleSheet("border: 1px solid gray; padding: 2px; background-color: white;")
+        mse_value.setFixedSize(80, 25)
+    
+        mse_layout.addWidget(mse_label)
+        mse_layout.addWidget(mse_value)
+        mse_layout.addStretch()
+        main_grid.addLayout(mse_layout, 5, 0)
 
         # RMSE row
-        rmse_label = QLabel("<b><i>RMSE</i></b>")
-        rmse_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)  
-        rmse_value = QLabel("99.8%")
-        rmse_value.setStyleSheet("border: 1px solid gray; padding: 2px; background-color: white; font-size: 10px;")
-        rmse_value.setFixedSize(80, 30) 
-        main_grid.addWidget(rmse_label, 5, 0, alignment=Qt.AlignRight) 
-        main_grid.addWidget(rmse_value, 5, 1, alignment=Qt.AlignLeft) 
+        rmse_layout = QHBoxLayout()
+        rmse_layout.setSpacing(20)  # Increased spacing between label and value box
+        rmse_layout.setContentsMargins(50, 0, 0, 0)
+    
+        rmse_label = QLabel("<b><i>RMSE:</i></b>")
+        rmse_value = QLabel(f"{rmse:.4f}")
+        rmse_value.setStyleSheet("border: 1px solid gray; padding: 2px; background-color: white;")
+        rmse_value.setFixedSize(80, 25)
+    
+        rmse_layout.addWidget(rmse_label)
+        rmse_layout.addWidget(rmse_value)
+        rmse_layout.addStretch()
+        main_grid.addLayout(rmse_layout, 6, 0)
 
-        # Regression plot
-        regression_plot = FigureCanvas(Figure(figsize=(12, 10)))  
-        regression_plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  
-        self.add_predicted_vs_ground_truth(regression_plot.figure)
 
-        regression_plot.figure.subplots_adjust(left=0.1, right=0.95, top=0.9, bottom=0.15)
+        # Add spacer with 0 height
+        main_grid.addItem(QSpacerItem(20, 0, QSizePolicy.Minimum, QSizePolicy.Expanding), 7, 0, 1, 2)
 
-        main_grid.addWidget(regression_plot, 6, 0, 1, 2)  
+        # Add the grid layout to a horizontal box to center it
+        hbox = QHBoxLayout()
+        hbox.addStretch(1)
+        hbox.addLayout(main_grid)
+        hbox.addStretch(1)
 
-        main_grid.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding), 7, 0, 1, 2)
+        layout.addStretch(1)
+        layout.addLayout(hbox)
+        layout.addStretch(1)
+        layout.setAlignment(Qt.AlignCenter)
 
-        # Add the grid layout to the main layout
-        layout.addLayout(main_grid)
-        layout.setContentsMargins(0, 0, 0, 0)  
         page.setLayout(layout)
         self.stacked_widget.addWidget(page)
+
 
     def add_compare_models_page(self):
         """
@@ -556,36 +611,57 @@ class NeuralNetworkEvaluator(QMainWindow):
         model_a_label = QLabel("<b><i>Model A</b></i>")
         model_a_layout.addWidget(model_a_label, alignment=Qt.AlignCenter)
         
-        model_a_selector = QComboBox()
-        model_a_selector.addItems(["Select the model...", "Model 1", "Model 2", "Model 3"])
-        model_a_selector.setStyleSheet("""
-            QComboBox {
+        model_a_file_btn = QPushButton("Select the model...")
+        model_a_file_btn.setStyleSheet("""
+            QPushButton {
                 border: 1px solid #a6c8ff;
                 border-radius: 5px;
-                padding: 5px;
+                padding: 5px 30px 5px 10px;  /* Right padding for icon */
                 background-color: #f9f9f9;
                 font-size: 14px;
                 color: #333;
+                text-align: left;
             }
-            QComboBox:hover {
+            QPushButton:hover {
                 border: 1px solid #87ceeb;
                 background-color: #ffffff;
             }
-            QComboBox::drop-down {
-                border-left: 1px solid #a6c8ff;
-                background-color: #e7f3ff;
-            }
-            QComboBox::down-arrow {
-                image: url(assets/arrow_down.png); /* Replace with your arrow icon path */
-                width: 10px;
-                height: 10px;
+            QPushButton::menu-indicator {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                background-color: #4285f4;  
+                image: url(assets/arrow_down.png);
+                min-width: 20px;
+                min-height: 20px;
+                border: none;
+                right: 5px;
             }
         """)
-        model_a_layout.addWidget(model_a_selector)
+        # Add indicator icon 
+        icon = QIcon("assets/arrow_down.png")
+        model_a_file_btn.setIcon(icon)
+        model_a_file_btn.setIconSize(QSize(12, 12))
+        model_a_file_btn.setLayoutDirection(Qt.RightToLeft)
+        
+        # Connect file dialog
+        def load_model_a():
+            file_name, _ = QFileDialog.getOpenFileName(
+                self, "Select Model File", "", "H5 Files (*.h5)"
+            )
+            if file_name:
+                model_a_file_btn.setText(os.path.basename(file_name))
+                # Here you would add your logic to load the model
+        
+        model_a_file_btn.clicked.connect(load_model_a)
+        model_a_layout.addWidget(model_a_file_btn)
         
         model_a_plot = FigureCanvas(Figure(figsize=(10, 8)))  
         model_a_plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.add_ground_truth_vs_prediction(model_a_plot.figure)
+        self.plot_step_prediction_vs_ground_truth(
+            model_a_plot.figure,
+            progress_state.test_results.get("y_true", []),
+            progress_state.test_results.get("y_pred", [])
+        )
         model_a_layout.addWidget(model_a_plot)
         
         model_a_layout.addWidget(QLabel("<b><i>Accuracy</b></i>"), alignment=Qt.AlignLeft)
@@ -599,36 +675,31 @@ class NeuralNetworkEvaluator(QMainWindow):
         model_b_label = QLabel("<b><i>Model B</b></i>")
         model_b_layout.addWidget(model_b_label, alignment=Qt.AlignCenter)
         
-        model_b_selector = QComboBox()
-        model_b_selector.addItems(["Select the model...", "Model 1", "Model 2", "Model 3"])
-        model_b_selector.setStyleSheet("""
-            QComboBox {
-                border: 1px solid #a6c8ff;
-                border-radius: 5px;
-                padding: 5px;
-                background-color: #f9f9f9;
-                font-size: 14px;
-                color: #333;
-            }
-            QComboBox:hover {
-                border: 1px solid #87ceeb;
-                background-color: #ffffff;
-            }
-            QComboBox::drop-down {
-                border-left: 1px solid #a6c8ff;
-                background-color: #e7f3ff;
-            }
-            QComboBox::down-arrow {
-                image: url(assets/arrow_down.png); /* Replace with your arrow icon path */
-                width: 10px;
-                height: 10px;
-            }
-        """)
-        model_b_layout.addWidget(model_b_selector)
+        model_b_file_btn = QPushButton("Select the model...")
+        model_b_file_btn.setStyleSheet(model_a_file_btn.styleSheet())
+        model_b_file_btn.setIcon(icon)
+        model_b_file_btn.setIconSize(QSize(12, 12))
+        model_b_file_btn.setLayoutDirection(Qt.RightToLeft)
+        
+        # Connect file dialog
+        def load_model_b():
+            file_name, _ = QFileDialog.getOpenFileName(
+                self, "Select Model File", "", "H5 Files (*.h5)"
+            )
+            if file_name:
+                model_b_file_btn.setText(os.path.basename(file_name))
+                # Here you would add your logic to load the model
+        
+        model_b_file_btn.clicked.connect(load_model_b)
+        model_b_layout.addWidget(model_b_file_btn)
         
         model_b_plot = FigureCanvas(Figure(figsize=(10, 8))) 
         model_b_plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.add_ground_truth_vs_prediction(model_b_plot.figure)
+        self.plot_step_prediction_vs_ground_truth(
+            model_b_plot.figure,
+            progress_state.test_results.get("y_true", []),
+            progress_state.test_results.get("y_pred", [])
+        )
         model_b_layout.addWidget(model_b_plot)
         
         model_b_layout.addWidget(QLabel("<b><i>Accuracy</b></i>"), alignment=Qt.AlignLeft)
@@ -648,24 +719,182 @@ class NeuralNetworkEvaluator(QMainWindow):
         empty_page = QWidget()
         self.stacked_widget.addWidget(empty_page)
 
-    def resizeEvent(self, event):
+    def plot_prediction_and_curves(self, fig):
+        
         """
-        Handle window resize events to adjust the plots dynamically.
-
+        Plot prediction vs ground truth using step plots
+        
         Args:
-            event: The resize event.
+            fig: matplotlib figure object
         """
-        for i in range(self.stacked_widget.count()):
-            page = self.stacked_widget.widget(i)
-            if page:
-                page.updateGeometry()
-        super().resizeEvent(event)
+        fig.clear()
+        ax = fig.add_subplot(111)  # Single plot
+
+        # Get data and convert to numpy arrays 
+        ground_truth = np.array(self.test_results.get("y_true", []), dtype=int) 
+        predicted = np.array(self.test_results.get("y_pred", []), dtype=int)
+
+        if len(ground_truth) > 0 and len(predicted) > 0:
+            # Create time axis
+            t = np.arange(len(ground_truth)) * 10  # Scale time by 10
+
+            # Ground truth plot (black line)
+            ax.plot(t, ground_truth, label='Ground Truth', color='black', linewidth=2)
+
+            # Prediction plot (red line)
+            ax.plot(t, predicted, label='Prediction', color='red', linewidth=1.5, alpha=0.7)
+
+            # Set y-axis ticks and labels using phase_to_int mapping
+            ax.set_yticks(list(int_to_phase.keys()))
+            ax.set_yticklabels(list(int_to_phase.values()))
+            
+            ax.set_xlabel("Time (index)")
+            ax.set_ylabel("Phase")
+            ax.set_title("Prediction vs Ground Truth")
+            ax.legend()
+            ax.grid(True)
+        else:
+            ax.text(0.5, 0.5, "Test results not available.\nTrain the model first.",
+                    ha='center', va='center')
+            ax.set_axis_off()
+
+        fig.tight_layout()
+
 
     def get_saved_state(self):
-        """
-        Get the current state of the NN Evaluator.
+        return self.state if hasattr(self, "state") else {}
 
-        Returns:
-            dict: A dictionary containing the current state of the evaluator.
-        """
-        return self.saved_state
+    def plot_prediction_vs_ground_truth(self, fig, ground_truth, predicted):
+        fig.clear()
+        axs = fig.subplots(nrows=1, ncols=2)
+
+        # 🟦 Courbe temporelle
+        axs[0].plot(ground_truth, label="Ground Truth", linewidth=1)
+        axs[0].plot(predicted, label="Prediction", linestyle="--", linewidth=1)
+        axs[0].set_title("Ground Truth vs Prediction")
+        axs[0].set_xlabel("Frame")
+        axs[0].set_ylabel("Forward Speed (m/s)")
+        axs[0].legend()
+        axs[0].grid(True)
+
+        # 🟫 Scatter plot
+        axs[1].scatter(ground_truth, predicted, alpha=0.6, s=10)
+        axs[1].plot([min(ground_truth), max(ground_truth)],
+                    [min(ground_truth), max(ground_truth)],
+                    'k--', linewidth=1)
+        axs[1].set_title("Predicted vs Ground Truth")
+        axs[1].set_xlabel("Ground Truth (m/s)")
+        axs[1].set_ylabel("Prediction (m/s)")
+        axs[1].grid(True)
+
+        fig.tight_layout()
+
+    def prediction_scatter_plot_canvas(self, fig):
+        """Plot scatter of predictions vs ground truth on a given figure"""
+        import numpy as np
+        from collections import Counter
+        
+        # Get data
+        y_true = np.array(progress_state.test_results.get("y_true", []))
+        y_pred = np.array(progress_state.test_results.get("y_pred", []))
+        
+        ax = fig.add_subplot(111)
+
+        if len(y_true) > 0 and len(y_pred) > 0:
+            jitter = 0.2
+            y_true_plot = y_true + np.random.normal(0, jitter, size=y_true.shape)
+            y_pred_plot = y_pred + np.random.normal(0, jitter, size=y_pred.shape)
+            sizes = 30
+            point_color = "royalblue"
+
+            # Scatter plot
+            ax.scatter(y_true_plot, y_pred_plot, alpha=0.4, s=sizes, color="tab:blue")
+
+            # Diagonal line
+            ax.plot([-1, 7], [-1, 7], 'k--', linewidth=1)
+
+            # Axis config
+            ax.set_xlim(-1, 7)
+            ax.set_ylim(-1, 7)
+            ax.set_xticks(range(7))
+            ax.set_yticks(range(7))
+
+            # Secondary axes for phase names
+            ax2 = ax.twinx()
+            ax3 = ax.twiny()
+            ax2.set_ylim(ax.get_ylim())
+            ax3.set_xlim(ax.get_xlim())
+            ax2.set_yticks(range(7))
+            ax3.set_xticks(range(7))
+            ax2.set_yticklabels(list(int_to_phase.values()))
+            ax3.set_xticklabels(list(int_to_phase.values()))
+
+            ax.set_xlabel("Ground Truth Phase (integer)")
+            ax.set_ylabel("Predicted Phase (integer)")
+            ax.set_title("Predicted vs Ground Truth (Scatter)")
+            ax.grid(True)
+
+        else:
+            ax.text(0.5, 0.5, "No data available", ha="center", va="center")
+            ax.set_axis_off()
+
+        fig.tight_layout()
+
+    def plot_confusion_matrix(self, y_true, y_pred, figsize=(6, 6)):  # Reduced matrix size
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+        from matplotlib.figure import Figure
+        from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+        import numpy as np
+
+        fig = Figure(figsize=figsize)
+        ax = fig.add_subplot(111)
+        cm = confusion_matrix(y_true, y_pred, labels=list(int_to_phase.keys()))
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=list(int_to_phase.values()))
+        disp.plot(ax=ax, cmap='Blues', colorbar=True)
+        ax.set_title("")  # Removed title
+        ax.set_xticklabels(list(int_to_phase.values()), rotation=45, ha="right")
+
+        # Adjust layout for centering and reduced margins
+        fig.subplots_adjust(top=0.9, bottom=0.3, left=0.2, right=0.8)  # Adjusted margins to fit within container
+        return FigureCanvas(fig)
+
+    def plot_step_prediction_vs_ground_truth(self, fig, ground_truth=None, predicted=None):
+        from functions import phase_to_int
+        import matplotlib.ticker as ticker
+        import numpy as np
+
+        # Correction ici : forcer en array
+        y_true = np.array(self.test_results.get("true_labels", []), dtype=int)
+        y_pred = np.array(self.test_results.get("predictions", []), dtype=int)
+        time = np.array(self.test_results.get("time", []))  # secondes
+
+        if len(y_true) == 0 or len(y_pred) == 0 or len(time) == 0:
+            print("❌ Données incomplètes pour le graphe temporel.")
+            return
+
+        # ✅ Tri par temps croissant
+        sorted_indices = np.argsort(time)
+        time = time[sorted_indices]
+        y_true = y_true[sorted_indices]
+        y_pred = y_pred[sorted_indices]
+
+        fig.clear()
+        ax = fig.add_subplot(111)
+
+        ax.plot(time, y_true, label="Ground Truth", color="black", linewidth=2)
+        ax.plot(time, y_pred, label="Prediction", color="red", linewidth=1.5, alpha=0.7)
+
+        ax.set_yticks(ticks=list(phase_to_int.values()))
+        ax.set_yticklabels(list(phase_to_int.keys()))
+
+        ax.set_xlabel("Time (ms)")
+        ax.set_ylabel("Phase")
+        ax.set_title("Prediction vs Ground Truth (Time-Aligned)")
+        ax.legend()
+        ax.grid(True)
+
+        ax.set_xlim(time[0], time[-1])
+        print(f"[INFO] Time range: {time[0]:.1f}ms → {time[-1]:.1f}ms")
+
+        ax.xaxis.set_major_locator(ticker.MaxNLocator(nbins=10))
+        fig.tight_layout()

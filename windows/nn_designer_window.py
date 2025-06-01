@@ -1,66 +1,505 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QGridLayout,
     QPushButton, QComboBox, QTextEdit, QListWidget, QListWidgetItem, QProgressDialog,
-    QFrame, QMessageBox, QGroupBox, QScrollArea, QSizePolicy
+    QFrame, QMessageBox, QGroupBox, QScrollArea, QSizePolicy, QProgressBar,QStackedLayout, QFileDialog, 
 )
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QIntValidator, QFont
+from PyQt5.QtGui import QIntValidator, QFont, QTextCursor, QIcon
 import random
 import os
 import time
 from widgets.header import Header
 import windows.progress_state as progress_state
+import numpy as np
+import windows.progress_state as progress_state
+from sklearn.model_selection import train_test_split
+from training_core.training_utils import (
+            load_and_preprocess_data,
+            train_model,
+            save_model_and_results
+        )          
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
+import re
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from windows.nn_evaluator_window import NeuralNetworkEvaluator
+class TrainingThread(QThread):
+    training_finished = pyqtSignal(object, object, object)
+    training_log = pyqtSignal(str)
 
-
-class NeuralNetworkDesignerWindow(QMainWindow):
-    """
-    Main window for the Neural Network Designer module.
-    Allows users to:
-    - Select training/test sets
-    - Configure neural network hyperparameters
-    - Choose optimizers and loss functions
-    - Start/stop training
-    - Monitor training progress
-    """
-    
-    def __init__(self, dataset_path=None, saved_state=None):
-        """
-        Initialize the Neural Network Designer window.
+    def __init__(self, X_train, X_val, X_test, y_train, y_val, y_test, params, test_time=None, parent=None):
+        super().__init__(parent)
+        self.X_train = X_train
+        self.X_val = X_val
+        self.X_test = X_test
+        self.y_train = y_train
+        self.y_val = y_val
+        self.y_test = y_test
+        self.params = params
+        self._stop_flag = False
+        self.test_time = test_time
         
-        Args:
-            dataset_path (str): Path to the dataset directory 
-            saved_state (dict): A dictionary containing the saved state of the NN Designer.
-        """
-        super().__init__()
-        # Explicitly set dataset_path as an instance variable
-        self.dataset_path = dataset_path
 
-        # Initialize with comprehensive default state
-        self.state = {
+    def stop(self):
+        self._stop_flag = True
+
+    def run(self):
+        from training_core.training_utils import train_model
+
+        def log_callback(msg):
+            self.training_log.emit(msg)
+
+        model, history, test_results, _ = train_model(
+            self.X_train, self.X_val, self.X_test,
+            self.y_train, self.y_val, self.y_test,
+            model_type=self.params["layers"],
+            optimizer_name=self.params["optimizer"],
+            loss_name=self.params["loss_function"],
+            epochs=self.params["epochs"],
+            learning_rate=self.params["learning_rate"],
+            batch_size=self.params["batch_size"],
+            num_layers=len(self.params["layers"]),
+            sequence_length=self.params["sequence_length"],
+            verbose=1,
+            stop_flag_getter=lambda: self._stop_flag,
+            log_callback=log_callback,
+            test_time=self.test_time
+        )
+
+        print("🧪 Test results keys:", test_results.keys())
+        self.training_finished.emit(model, history, test_results)
+
+        def __del__(self):
+            """Ensure thread is stopped when deleted."""
+            if self.isRunning():
+                self.stop()
+                self.wait()
+    
+class NeuralNetworkDesignerWindow(QMainWindow):
+    def __init__(self, dataset_path=None, saved_state=None):
+        super().__init__()
+        self.dataset_path = dataset_path
+        self.setWindowTitle("Data Monitoring Software")
+        self.resize(1000, 700)
+
+        # Initialize state with defaults or saved values
+        self.state = saved_state if saved_state else {
             "optimizer": "Adam",
             "loss_function": None,
-            "hyperparameters": {
-                "layer_number": "3",
-                "sequence_length": "50",
-                "batch_size": "32",
-                "epoch_number": "50"
-            },
+            "hyperparameters": None,
             "selected_files": [],
             "dataset_path": dataset_path,
-            "summary_text": "No parameters saved yet"
+            "summary_text": "No hyperparameters saved",
+            "training_monitor_logs": "",
+            "training_progress": 0,
+            "eval_plot_index": 0,
+            "training_history": None,
+            "test_results": None,
+            "trained_model": None
         }
-        
-        # Merge with saved state if exists
-        if saved_state:
-            self.state.update(saved_state)
-            # Ensure dataset_path is consistent with the saved state
-            self.dataset_path = self.state.get("dataset_path", self.dataset_path)
+        # Initialize layer-related attributes
+        self.layer_type_combos = []  # Stores layer type combo boxes
+        self.layer_combo_rows = []  # Stores layer rows
+        self.layer_scroll_layout = None
+
+        self.hyperparams_saved = saved_state is not None and saved_state.get("hyperparameters") is not None
+        self.training_stopped = False
         
         self.init_ui()
         self.restore_state()
-        
-        # Ensure summary is always visible
         self.update_summary_display()
+
+    def restore_state(self):
+        """Restore all UI elements from self.state."""
+        self.optimizer_combo.setCurrentText(self.state.get("optimizer", "Adam"))
+        self.classification_loss_combo.setCurrentText(self.state.get("loss_function", "CrossEntropyLoss"))
+        self.regression_loss_combo.setCurrentIndex(-1)  # Ensure regression loss is not selected by default
+
+        # Ensure hyperparameters are initialized
+        hp = self.state.get("hyperparameters", {})
+        if hp is None:
+            hp = {}
+            self.state["hyperparameters"] = hp
+
+        self.sequence_length_input.setText(str(hp.get("sequence_length", 50)))
+        self.stride_input.setText(str(hp.get("stride", 5)))
+        self.batch_size_input.setText(str(hp.get("batch_size", 32)))
+        self.epoch_number_input.setText(str(hp.get("epoch_number", 10)))
+        self.learning_rate_combo.setCurrentText(str(hp.get("learning_rate", 0.001)))
+
+        self.clear_layer_combos()
+        for layer_cfg in hp.get("layers", []):
+            self.add_layer_combo_row(config=layer_cfg)
+
+        QTimer.singleShot(100, self.restore_checkboxes)
+
+        self.training_monitor_text.setText(self.state.get("training_monitor_logs", ""))
+        self.training_progress_bar.setValue(self.state.get("training_progress", 0))
+        self.nn_text_edit.setText(self.state.get("summary_text", "No hyperparameters saved"))  # Reset summary text
+        self.eval_stack.setCurrentIndex(self.state.get("eval_plot_index", 0))
+
+        # Restore evaluation plot if training history exists
+        history = self.state.get("training_history", None)
+        if history:
+            self.plot_training_curves(history)
+
+    def clear_layer_combos(self):
+        """Remove all layer combo rows."""
+        for row_widget in self.layer_combo_rows:
+            row_widget.setParent(None)
+            row_widget.deleteLater()
+        self.layer_type_combos.clear()
+        self.layer_combo_rows.clear()
+
+    def add_layer_combo_row(self, config=None):
+        # Create the layer row widget
+        row_widget = QWidget()
+        row_layout = QGridLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setHorizontalSpacing(10)
+        row_layout.setVerticalSpacing(5)
+
+        # Create layer number label
+        layer_number = len(self.layer_combo_rows) + 1
+        layer_label = QLabel(f"Layer {layer_number}")
+        layer_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #333;")
+        layer_label.setFixedHeight(20)
+
+        # Layer type combobox
+        combo = QComboBox()
+        combo.addItems(["LSTM", "GRU", "RNN", "Transformer", "TinyTransformer"])
+        combo.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #dcdcdc;
+                padding: 4px;
+                background-color: white;
+                font-size: 12px;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                border-left: 1px solid #cce0ff;
+                background-color: #dceaf7;
+                image: url(assets/arrow_down.png);
+                min-width: 20px;
+                min-height: 20px;
+                border: none;
+            }
+        """)
+
+        # Parameter widgets setup
+        param_widgets = {}
+        param_layout = QVBoxLayout()
+        param_layout.setContentsMargins(0, 0, 0, 0)
+        param_layout.setSpacing(5)
+
+        def create_param_input(label, default_val):
+            lbl = QLabel(label)
+            lbl.setStyleSheet("font-weight: bold; color: #333; font-size: 14px; border: none;")
+            
+            input_widget = None
+
+            # Common combo box style (same as Layer Types selector)
+            combo_style = """
+                QComboBox {
+                    border: 1px solid #dcdcdc;
+                    padding: 4px;
+                    background-color: white;
+                    font-size: 12px;
+                }
+                QComboBox::drop-down {
+                    subcontrol-origin: padding;
+                    subcontrol-position: top right;
+                    border-left: 1px solid #cce0ff;
+                    background-color: #dceaf7;
+                    image: url(assets/arrow_down.png);
+                    min-width: 20px;
+                    min-height: 20px;
+                    border: none;
+                }
+            """
+            
+            if label == "Activation":
+                input_widget = QComboBox()
+                input_widget.addItems(["tanh", "relu", "gelu", "sigmoid", "linear", "softmax"])
+                input_widget.setCurrentText(str(default_val))
+                input_widget.setStyleSheet(combo_style)  
+            elif label == "Bidirectional":
+                input_widget = QComboBox()
+                input_widget.addItems(["False", "True"])
+                input_widget.setCurrentText(str(default_val))
+                input_widget.setStyleSheet(combo_style)  # Apply the same style
+
+            else:
+                input_widget = QLineEdit(str(default_val))
+                input_widget.setStyleSheet("""
+                    QLineEdit {
+                        border: 1px solid #dcdcdc;
+                        padding: 4px;
+                        font-size: 12px;
+                        color: #000;
+                        background-color: #fff;
+                    }
+                """)
+
+            input_widget.setFixedHeight(24)
+            param_layout.addWidget(lbl)
+            param_layout.addWidget(input_widget)
+            param_widgets[label.lower().replace(" ", "_")] = input_widget
+
+        def update_param_fields(layer_type):
+            # Clear existing widgets
+            for i in reversed(range(param_layout.count())):
+                param_layout.itemAt(i).widget().setParent(None)
+            param_widgets.clear()
+
+            if layer_type in ["LSTM", "GRU", "RNN"]:
+                create_param_input("Units", config.get("units", 64) if config else 64)
+                create_param_input("Dropout", config.get("dropout", 0.3) if config else 0.3)
+                create_param_input("Activation", config.get("activation", "tanh") if config else "tanh")
+                create_param_input("Bidirectional", config.get("bidirectional", "False") if config else "False")
+            elif layer_type in ["Transformer", "TinyTransformer"]:
+                create_param_input("d_model", config.get("d_model", 64 if layer_type == "Transformer" else 32) if config else 64)
+                create_param_input("num_heads", config.get("num_heads", 8 if layer_type == "Transformer" else 2) if config else 8)
+                create_param_input("Dropout", config.get("dropout", 0.1) if config else 0.1)
+                create_param_input("Attention Dropout", config.get("attention_dropout", 0.1) if config else 0.1)
+                create_param_input("Activation", config.get("activation", "relu") if config else "relu")
+
+        combo.currentTextChanged.connect(update_param_fields)
+        combo.setCurrentText(config.get("type", "LSTM") if config else "LSTM")
+        update_param_fields(combo.currentText())
+
+        # Remove button
+        remove_btn = QPushButton()
+        remove_btn.setIcon(QIcon("assets/bin.png"))
+        remove_btn.setStyleSheet("""
+            QPushButton {
+                border: none;
+                background-color: transparent;
+            }
+            QPushButton:hover {
+                background-color: #f5f5f5;
+            }
+        """)
+        remove_btn.setFixedSize(28, 28)
+        remove_btn.clicked.connect(lambda: self.remove_layer_row(row_widget))
+
+        # Add widgets to layout
+        row_layout.addWidget(layer_label, 0, 0)
+        row_layout.addWidget(combo, 1, 0)
+        row_layout.addWidget(remove_btn, 1, 1)
+        row_layout.addLayout(param_layout, 2, 0, 1, 2)
+
+        # Add separator (except for first layer)
+        if len(self.layer_combo_rows) > 0:
+            separator = QWidget()
+            sep_layout = QVBoxLayout(separator)
+            sep_layout.setContentsMargins(0, 8, 0, 8)
+            sep_layout.setSpacing(0)
+            
+            line = QFrame()
+            line.setFrameShape(QFrame.HLine)
+            line.setFrameShadow(QFrame.Sunken)
+            line.setStyleSheet("background-color: #dcdcdc; border: none;")
+            sep_layout.addWidget(line)
+            
+            self.layer_scroll_layout.addWidget(separator)
+            row_widget.separator = separator
+
+        self.layer_scroll_layout.addWidget(row_widget)
+        
+        # Store all layer components together
+        self.layer_combo_rows.append({
+            'widget': row_widget,
+            'combo': combo,
+            'param_widgets': param_widgets,
+            'label': layer_label
+        })
+
+    def remove_layer_row(self, row_widget):
+        """Remove a layer row and its separator"""
+        for i, layer in enumerate(self.layer_combo_rows):
+            if layer['widget'] == row_widget:
+                # Remove separator if exists
+                if hasattr(row_widget, 'separator'):
+                    row_widget.separator.setParent(None)
+                    row_widget.separator.deleteLater()
+                
+                # Remove the row widget
+                row_widget.setParent(None)
+                row_widget.deleteLater()
+                
+                # Remove from list
+                self.layer_combo_rows.pop(i)
+                
+                # If we removed the first row, remove next row's separator
+                if i == 0 and len(self.layer_combo_rows) > 0:
+                    next_row = self.layer_combo_rows[0]['widget']
+                    if hasattr(next_row, 'separator'):
+                        next_row.separator.setParent(None)
+                        next_row.separator.deleteLater()
+                        delattr(next_row, 'separator')
+                
+                # Renumber remaining layers
+                self.renumber_layer_labels()
+                break
+
+    def renumber_layer_labels(self):
+        """Update all layer numbers"""
+        for i, layer in enumerate(self.layer_combo_rows):
+            layer['label'].setText(f"Layer {i+1}")
+
+    def get_layer_configs(self):
+        """Get configuration for all layers"""
+        configs = []
+        for layer in self.layer_combo_rows:
+            config = {
+                'type': layer['combo'].currentText(),
+            }
+            
+            params = layer['param_widgets']
+            layer_type = config['type']
+            
+            if layer_type in ["LSTM", "GRU", "RNN"]:
+                config.update({
+                    'units': int(params['units'].text()),
+                    'dropout': float(params['dropout'].text()),
+                    'activation': params['activation'].currentText(),
+                    'bidirectional': params['bidirectional'].currentText() == "True"
+                })
+            elif layer_type in ["Transformer", "TinyTransformer"]:
+                config.update({
+                    'd_model': int(params['d_model'].text()),
+                    'num_heads': int(params['num_heads'].text()),
+                    'dropout': float(params['dropout'].text()),
+                    'attention_dropout': float(params['attention_dropout'].text()),
+                    'activation': params['activation'].currentText()
+                })
+            
+            configs.append(config)
+        return configs
+
+    def get_saved_state(self):
+        """Return the complete current state."""
+        self.state["hyperparameters"] = {
+            "layers": self.get_layer_configs(),
+            "sequence_length": self.sequence_length_input.text(),
+            "stride": self.stride_input.text(),
+            "batch_size": self.batch_size_input.text(),
+            "epoch_number": self.epoch_number_input.text(),
+            "learning_rate": self.learning_rate_combo.currentText()
+        }
+        self.state["optimizer"] = self.optimizer_combo.currentText()
+        if self.classification_loss_combo.currentIndex() >= 0:
+            self.state["loss_function"] = self.classification_loss_combo.currentText()
+        elif self.regression_loss_combo.currentIndex() >= 0:
+            self.state["loss_function"] = self.regression_loss_combo.currentText()
+        else:
+            self.state["loss_function"] = None
+        self.state["selected_files"] = [
+            self.file_list.item(i).text()
+            for i in range(self.file_list.count())
+            if self.file_list.item(i).checkState() == Qt.Checked
+        ]
+        self.state["training_history"] = getattr(self, "training_history", None)  # Save training history
+        self.state["test_results"] = getattr(self, "test_results", None)
+        self.state["trained_model"] = getattr(self, "trained_model", None)
+        self.state["training_monitor_logs"] = self.training_monitor_text.toPlainText()  # Save training monitor logs
+        self.state["training_progress"] = self.training_progress_bar.value()  # Save progress bar value
+        self.state["summary_text"] = self.nn_text_edit.toPlainText()  # Save summary display text
+        self.state["eval_plot_index"] = self.eval_stack.currentIndex()  # Save evaluation plot state
+        return self.state
+
+
+    def update_summary_display(self):
+        """Update the summary text area with current state."""
+        if not self.hyperparams_saved or not self.state.get("hyperparameters"):
+            self.nn_text_edit.setText("No hyperparameters saved")
+            return
+            
+        hp = self.state["hyperparameters"]
+        optimizer = self.state.get("optimizer", "Adam")
+        loss_function = self.state.get("loss_function", "Not selected")
+        layer_configs = hp.get("layers", [])
+        layer_types = [layer["type"] for layer in layer_configs] if layer_configs else []
+        
+        summary = (
+            f"Hyperparameters saved:\n"
+            f"• Optimizer: {optimizer}\n"
+            f"• Loss Function: {loss_function}\n"
+            f"• Layer Types: {', '.join(layer_types) if layer_types else 'None'}\n"
+            f"• Sequence Length: {hp.get('sequence_length', 50)}\n"
+            f"• Stride: {hp.get('stride', 5)}\n"
+            f"• Batch Size: {hp.get('batch_size', 32)}\n"
+            f"• Epoch Number: {hp.get('epoch_number', 10)}\n"
+            f"• Learning Rate: {hp.get('learning_rate', 0.001)}"
+        )
+        self.nn_text_edit.setText(summary)
+
+    def get_training_parameters(self):
+        """Retourne tous les paramètres nécessaires à l'entraînement."""
+        if "hyperparameters" not in self.state:
+            QMessageBox.warning(self, "Missing Hyperparameters", "Please save your hyperparameters before starting training.")
+            return None, None
+        hp = self.state["hyperparameters"]
+        params = {
+            "optimizer": self.state["optimizer"],
+            "loss_function": self.state["loss_function"],
+            "loss_type": "Classification" if self.classification_loss_combo.currentIndex() >= 0 else "Regression",
+            "layers": hp.get("layers", []),
+            "sequence_length": int(hp.get("sequence_length", 50)),
+            "stride": int(hp.get("stride", 5)),
+            "batch_size": int(hp.get("batch_size", 32)),
+            "epochs": int(hp.get("epoch_number", 10)),
+            "learning_rate": float(hp.get("learning_rate", 0.001))
+        }
+        selected_files = [
+            self.file_list.item(i).text()
+            for i in range(self.file_list.count())
+            if self.file_list.item(i).checkState() == Qt.Checked
+        ]
+        return params, selected_files
+
+    def save_hyperparameters(self):
+        """Save the hyperparameters entered by the user and update state."""
+        # Get values from input fields
+        layer_configs = self.get_layer_configs()
+        sequence_length = self.sequence_length_input.text()
+        stride = self.stride_input.text()
+        batch_size = self.batch_size_input.text()
+        epoch_number = self.epoch_number_input.text()
+        learning_rate = self.learning_rate_combo.currentText()
+        optimizer = self.optimizer_combo.currentText().strip()
+        classification_loss = self.classification_loss_combo.currentText().strip()
+        regression_loss = self.regression_loss_combo.currentText().strip()
+
+        # Validation
+        if not layer_configs:
+            QMessageBox.warning(self, "Missing Layers", "Please add at least one layer before saving hyperparameters.")
+            return
+        if not all([sequence_length, stride, batch_size, epoch_number, optimizer, learning_rate]):
+            QMessageBox.warning(self, "Incomplete Hyperparameters", "Please fill in all hyperparameters before saving.")
+            return
+        if (not classification_loss and not regression_loss) or (classification_loss and regression_loss):
+            QMessageBox.warning(self, "Invalid Selection", "Please select either a Classification or Regression loss.")
+            return
+
+        # Save in state
+        self.state["optimizer"] = optimizer
+        self.state["loss_function"] = classification_loss if classification_loss else regression_loss
+        self.state["hyperparameters"] = {
+            "layers": layer_configs,
+            "sequence_length": sequence_length,
+            "stride": stride,
+            "batch_size": batch_size,
+            "epoch_number": epoch_number,
+            "learning_rate": learning_rate
+        }
+        
+        # Mark as saved and update display
+        self.hyperparams_saved = True
+        self.update_summary_display()
+        QMessageBox.information(self, "Hyperparameters Saved", "The hyperparameters have been saved successfully.")
 
     def init_ui(self):
         """Initialize all UI components of the window."""
@@ -85,23 +524,6 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         # Populate file list if dataset path was provided
         if self.dataset_path:
             self.populate_file_list()
-        
-        # Populate loss function combo boxes using the loss_function_categories dictionary
-        self.classification_loss_combo.addItems(self.loss_function_categories["Classification"])
-        self.regression_loss_combo.addItems(self.loss_function_categories["Regression"])
-        
-        # Set default selections
-        self.classification_loss_combo.setCurrentText("CrossEntropyLoss")
-        self.regression_loss_combo.setCurrentText("MSELoss")
-        
-        # Connect signals
-        self.classification_loss_combo.currentIndexChanged.connect(
-            lambda: self.on_loss_function_changed(is_classification=True))
-        self.regression_loss_combo.currentIndexChanged.connect(
-            lambda: self.on_loss_function_changed(is_classification=False))
-        
-        # Ensure mutual exclusivity for default selections
-        self.on_loss_function_changed(is_classification=True)
 
     def create_scrollable_container(self):
         """Create the scrollable main container for responsive layout."""
@@ -133,14 +555,14 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         """Create the progress indicator showing workflow steps."""
         # Top bar layout (back button, title, progress)
         top_bar_layout = QHBoxLayout()
-
-        # Left: Back button
+        
+        #  Left: Back button
         left_widget = QWidget()
         left_layout = QHBoxLayout()
         left_layout.setContentsMargins(0,0,0,0)
         back_btn = QPushButton("← Back")
         back_btn.setFixedSize(100, 30)
-        back_btn.clicked.connect(self.go_back_to_start)
+        back_btn.clicked.connect(self.go_back)
         left_layout.addWidget(back_btn, alignment=Qt.AlignLeft)
         left_widget.setLayout(left_layout)
 
@@ -247,64 +669,43 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         self.main_layout.addLayout(content_layout)
 
     def create_file_selection_panel(self, parent_layout):
-        """Create the left panel for file selection."""
+        """
+        Create the left panel for file selection.
+
+        Args:
+            parent_layout: The layout to add this panel to
+        """
         left_panel = QFrame()
         left_panel.setFrameShape(QFrame.StyledPanel)
         left_panel.setStyleSheet("background: white")
         left_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         left_layout = QVBoxLayout(left_panel)
 
-        # File list widget
+        # Title
         left_layout.addWidget(QLabel("File name"))
+
+        # File list widget
         self.file_list = QListWidget()
         self.file_list.setStyleSheet("""
-            border: 1px solid #dcdcdc; 
-            background-color: white; 
+            border: 1px solid #dcdcdc;
+            background-color: white;
             padding: 4px;
         """)
-        
-        # Connect the signal for checkbox state changes
-        self.file_list.itemChanged.connect(self.on_checkbox_changed)
-            
         left_layout.addWidget(self.file_list)
 
-        # Container for proper margins
+        # Wrap in container for margins
         left_panel_container = QWidget()
         left_panel_layout = QVBoxLayout(left_panel_container)
-        left_panel_layout.setContentsMargins(7, 0, 0, 0) 
+        left_panel_layout.setContentsMargins(7, 0, 0, 0)
         left_panel_layout.addWidget(left_panel)
-        
+
         parent_layout.addWidget(left_panel_container, 1)
 
-    def on_checkbox_changed(self, item):
-        """Called automatically when a checkbox state changes."""
-        self.save_current_selections()
-        print(f"Checkbox changed: {item.text()} -> {'Checked' if item.checkState() == Qt.Checked else 'Unchecked'}")
-
-    def save_current_selections(self):
-        """Save the current state of checkboxes in real-time."""
-        self.state["selected_files"] = [
-            self.file_list.item(i).text()
-            for i in range(self.file_list.count())
-            if self.file_list.item(i).checkState() == Qt.Checked
-        ]
-        # Update the complete saved state
-        self.saved_state = self.get_saved_state()
-        print(f"Saved selected files: {self.state['selected_files']}")
-
-    def show_page(self):
-        """Display the current page of files in the list widget."""
-        self.file_list.clear()
-        for file_name in self.state["all_files"]:
-            item = QListWidgetItem(file_name)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked if file_name in self.state["selected_files"] else Qt.Unchecked)
-            self.file_list.addItem(item)
 
     def create_nn_config_panel(self, parent_layout):
         """
         Create the middle panel for NN configuration.
-        
+
         Args:
             parent_layout: The layout to add this panel to
         """
@@ -313,127 +714,198 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         middle_panel.setStyleSheet("background: white")
         middle_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         middle_layout = QVBoxLayout(middle_panel)
+        middle_layout.setContentsMargins(5, 5, 5, 5)  # Add some margins
 
         # Initialize optimizer combo box
         self.optimizer_combo = QComboBox()
-        self.optimizer_combo.addItems([
-            "Adam", "SGD", "AdamW"
-        ])
+        self.optimizer_combo.addItems(["Adam", "SGD", "AdamW"])
 
-        # Define loss function categories (single source of truth)
+        # Initialize two loss combo boxes: one for Classification, one for Regression
+        self.classification_loss_combo = QComboBox()
+        self.regression_loss_combo = QComboBox()
+
+        # Define loss function categories
         self.loss_function_categories = {
             "Classification": ["CrossEntropyLoss", "BCEWithLogitsLoss"],
             "Regression": ["MSELoss", "SmoothL1Loss", "HuberLoss"]
         }
 
-        # Populate loss function combos using the dictionary
-        self.classification_loss_combo = QComboBox()
-        self.regression_loss_combo = QComboBox()
-        self.classification_loss_combo.addItems(self.loss_function_categories["Classification"])
-        self.regression_loss_combo.addItems(self.loss_function_categories["Regression"])
+        for loss in self.loss_function_categories["Classification"]:
+            self.classification_loss_combo.addItem(loss)
+        for loss in self.loss_function_categories["Regression"]:
+            self.regression_loss_combo.addItem(loss)
 
-        # Set default values
-        self.classification_loss_combo.setCurrentText("CrossEntropyLoss")
-        self.regression_loss_combo.setCurrentText("MSELoss")
-
-        # Ensure only one loss type is selected
         self.classification_loss_combo.currentIndexChanged.connect(
-            lambda i: self.clear_regression_loss() if i != -1 else None
+            lambda i: self.regression_loss_combo.setCurrentIndex(-1) if i != -1 else None
         )
         self.regression_loss_combo.currentIndexChanged.connect(
-            lambda i: self.clear_classification_loss() if i != -1 else None
+            lambda i: self.classification_loss_combo.setCurrentIndex(-1) if i != -1 else None
         )
 
-        # Style for combo boxes
         combo_style = """
             QComboBox { 
                 border: 1px solid #dcdcdc; 
                 padding: 4px; 
                 background-color: white; 
+                font-size: 12px; 
             }
             QComboBox::drop-down {
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
                 border-left: 1px solid #cce0ff;
-                background-color: #dceaf7; 
+                background-color: #dceaf7;
                 image: url(assets/arrow_down.png);
-                min-width: 20px; 
-                min-height: 20px; 
-                border: none; 
-            }        
+                min-width: 20px;
+                min-height: 20px;
+                border: none;
+            }
         """
         self.optimizer_combo.setStyleSheet(combo_style)
         self.classification_loss_combo.setStyleSheet(combo_style)
         self.regression_loss_combo.setStyleSheet(combo_style)
 
-        # Add optimizer and loss sections
         middle_layout.addWidget(QLabel("<b><i>Optimizer</b></i>"))
         middle_layout.addWidget(self.optimizer_combo)
         middle_layout.addWidget(QLabel("<b><i>Classification Loss Function</b></i>"))
         middle_layout.addWidget(self.classification_loss_combo)
         middle_layout.addWidget(QLabel("<b><i>Regression Loss Function</b></i>"))
         middle_layout.addWidget(self.regression_loss_combo)
-        middle_layout.addWidget(QLabel("<b><i>Neural Network Model</b></i>"))
 
-        # Hyperparameters group box
-        hyper_box = QGroupBox("Hyperparameters")
+        # ===== Hyperparameters Section =====
+        hyper_box = QGroupBox()
+        hyper_box.setTitle("Hyperparameters")
         hyper_box.setStyleSheet("""
-            border: 1px solid #dcdcdc;
-            border-radius: 5px;
-            padding: 15px;
+            QGroupBox {
+                font-weight: bold;
+                font-style: italic;
+                border: 1px solid #dcdcdc;
+                border-radius: 5px;
+                margin-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 3px;
+                color: black;
+            }
         """)
-        hyper_layout = QGridLayout()  
-        hyper_layout.setContentsMargins(0, 10, 10, 10)
-        hyper_layout.setVerticalSpacing(5)  
+        hyper_layout = QGridLayout()
+        hyper_layout.setContentsMargins(10, 15, 10, 10)
+        hyper_layout.setVerticalSpacing(5)
 
-        # Hyperparameter inputs
-        self.layer_number_input = QLineEdit("3")
-        self.sequence_length_input = QLineEdit("50")
-        self.batch_size_input = QLineEdit("32")
-        self.epoch_number_input = QLineEdit("50")
-
-        # Style for labels and inputs
-        label_style = """
-            font-weight: bold;
-            color: #333;
-            font-size: 14px;
-            border: none;
-            margin-left: 0px;
-            padding-left: 0px;
-        """
+        label_style = "font-weight: bold; color: #333; font-size: 14px; border: none;"
         input_style = """
             QLineEdit {
                 border: 1px solid #dcdcdc;
                 padding: 4px;
                 font-size: 12px;
-                color: #000; 
-                background-color: #fff; 
+                color: #000;
+                background-color: #fff;
             }
         """
 
-        self.layer_number_input.setStyleSheet(input_style)
-        self.sequence_length_input.setStyleSheet(input_style)
-        self.batch_size_input.setStyleSheet(input_style)
-        self.epoch_number_input.setStyleSheet(input_style)
+        self.sequence_length_input = QLineEdit("50")
+        self.stride_input = QLineEdit("5")
+        self.batch_size_input = QLineEdit("32")
+        self.epoch_number_input = QLineEdit("10")
 
-        # Add hyperparameter fields to grid
+        self.learning_rate_combo = QComboBox()
+        self.learning_rate_combo.addItems(["0.01", "0.001", "0.0001", "0.00001"])
+        self.learning_rate_combo.setCurrentText("0.001")
+        self.learning_rate_combo.setStyleSheet(combo_style)
+
+        for widget in [self.sequence_length_input, self.stride_input, self.batch_size_input, self.epoch_number_input]:
+            widget.setStyleSheet(input_style)
+
         fields = [
-            ("Layer Number", self.layer_number_input),
             ("Sequence Length", self.sequence_length_input),
+            ("Stride", self.stride_input),
             ("Batch Size", self.batch_size_input),
-            ("Epoch Number", self.epoch_number_input)
+            ("Epoch Number", self.epoch_number_input),
+            ("Learning Rate", self.learning_rate_combo)
         ]
 
-        for row, (label_text, input_field) in enumerate(fields):
+        for row, (label_text, input_widget) in enumerate(fields):
             lbl = QLabel(label_text)
             lbl.setStyleSheet(label_style)
-            lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)  
-            input_field.setFixedHeight(24)  
-            hyper_layout.addWidget(lbl, row, 0) 
-            hyper_layout.addWidget(input_field, row, 1) 
-            
+            input_widget.setFixedHeight(24)
+            hyper_layout.addWidget(lbl, row, 0)
+            hyper_layout.addWidget(input_widget, row, 1)
+
         hyper_box.setLayout(hyper_layout)
         middle_layout.addWidget(hyper_box)
+
+        # ===== Layer Types Section =====
+        layer_box = QGroupBox()
+        layer_box.setTitle("Layer Types")
+        layer_box.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                font-style: italic;
+                border: 1px solid #dcdcdc;
+                border-radius: 5px;
+                margin-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 3px;
+                color: black;
+            }
+        """)
+
+        # Create a scroll area for the layer types
+        layer_scroll = QScrollArea()
+        layer_scroll.setWidgetResizable(True)
+        layer_scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+            }
+            QScrollBar:vertical {
+                width: 8px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #dceaf7;
+                min-height: 20px;
+            }
+        """)
+        layer_scroll.setMinimumHeight(150)  
+
+        layer_scroll_content = QWidget()
+        self.layer_scroll_layout = QVBoxLayout(layer_scroll_content)
+        self.layer_scroll_layout.setContentsMargins(0, 10, 8, 10)
+        self.layer_scroll_layout.setSpacing(5)
+
+        # Add "Add Layer" button
+        add_layer_button = QPushButton("Add Layer")
+        add_layer_button.setStyleSheet("""
+            QPushButton {
+                background-color: #dceaf7;
+                font-weight: bold;
+                font-size: 12px;
+                border: 2px solid #dcdcdc;
+                padding: 5px 0px;
+                border-radius: 20px;
+                min-width: 100px;
+                max-width: 100px;
+            }
+            QPushButton:hover {
+                background-color: #cce0f5;
+            }
+        """)
+        add_layer_button.clicked.connect(self.add_layer_combo_row)
+
+        # Set the scroll area content
+        layer_scroll.setWidget(layer_scroll_content)
+
+        # Add the scroll area and button to the group box
+        layer_box_layout = QVBoxLayout()
+        layer_box_layout.addWidget(layer_scroll)
+        layer_box_layout.addWidget(add_layer_button, 0, Qt.AlignCenter)  
+        layer_box.setLayout(layer_box_layout)
+
+        middle_layout.addWidget(layer_box)
 
         # Save button
         save_btn = QPushButton("Save Hyperparameters")
@@ -442,79 +914,70 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                 background-color: #dceaf7;
                 font-weight: bold;
                 font-size: 12px;
-                border: 2px solid #dcdcdc; 
+                border: 2px solid #dcdcdc;
                 padding: 8px 0px;
             }
             QPushButton:hover {
-                background-color: #cce0f5; 
+                background-color: #cce0f5;
             }
-            """)
-        save_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  
+        """)
+        save_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         save_btn.clicked.connect(self.save_hyperparameters)
+        middle_layout.addWidget(save_btn)
 
-        save_btn_layout = QVBoxLayout()
-        save_btn_layout.addWidget(save_btn)
-        middle_layout.addLayout(save_btn_layout)
-
-        # NN summary display
+        # Summary text area
         self.nn_text_edit = QTextEdit()
         self.nn_text_edit.setReadOnly(True)
-        self.nn_text_edit.setStyleSheet("""
-            border: 1px solid #dcdcdc; 
-            background-color: white; 
-            padding: 4px;
-        """)
+        self.nn_text_edit.setStyleSheet("border: 1px solid #dcdcdc; background-color: white; padding: 4px;")
         middle_layout.addWidget(self.nn_text_edit, 1)
 
         parent_layout.addWidget(middle_panel, 1)
 
-    def clear_classification_loss(self):
-        """Clear the classification loss combo box selection."""
-        self.classification_loss_combo.setCurrentIndex(-1)
-
-    def clear_regression_loss(self):
-        """Clear the regression loss combo box selection."""
-        self.regression_loss_combo.setCurrentIndex(-1)
-
     def create_evaluation_panel(self, parent_layout):
-        """
-        Create the right panel for evaluation visualization.
-        
-        Args:
-            parent_layout: The layout to add this panel to
-        """
-        right_panel = QFrame()
-        right_panel.setFrameShape(QFrame.StyledPanel)
-        right_panel.setStyleSheet("background: white")
-        right_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        right_layout = QVBoxLayout(right_panel)
-        
-        # Placeholder for evaluation plot
-        plot_placeholder = QLabel("Plot will appear here")
-        plot_placeholder.setAlignment(Qt.AlignCenter)
-        plot_placeholder.setStyleSheet("""
-            background: white; 
+        """Crée le panneau d’évaluation avec placeholder et figure canvas."""
+
+        # ➤ Placeholder pour l'état initial
+        self.eval_plot_placeholder = QLabel("Plot will appear here")
+        self.eval_plot_placeholder.setAlignment(Qt.AlignCenter)
+        self.eval_plot_placeholder.setStyleSheet("""
+            background: white;
             border: 1px solid #dcdcdc;
+            color: gray;
+            font-style: italic;
         """)
-        right_layout.addWidget(plot_placeholder, 1)
 
-        # Container for proper margins
-        right_panel_container = QWidget()
-        right_panel_layout = QVBoxLayout(right_panel_container)
-        right_panel_layout.setContentsMargins(0, 0, 7, 0)  
-        right_panel_layout.addWidget(right_panel)
+        # ➤ Canvas pour afficher les plots (taille augmentée)
+        self.eval_canvas = FigureCanvas(Figure(figsize=(6, 5)))  # ✅ Taille plus grande
+        self.eval_canvas.setStyleSheet("background: white; border: 1px solid #dcdcdc;")
 
-        parent_layout.addWidget(right_panel_container, 1)
+        # ➤ Stack layout pour alterner placeholder / canvas
+        self.eval_stack = QStackedLayout()
+        self.eval_stack.addWidget(self.eval_plot_placeholder)  # index 0
+        self.eval_stack.addWidget(self.eval_canvas)            # index 1
+        self.eval_stack.setCurrentIndex(0)  # Par défaut = placeholder
+
+        # ➤ Conteneur pour empiler dans le layout principal
+        container = QWidget()
+        container.setLayout(self.eval_stack)
+
+        # ➤ Ajoute à la colonne de droite
+        parent_layout.addWidget(container, 1)
+
+        # ➤ Optionnel : préparer layout plus propre
+        self.eval_canvas.figure.tight_layout()
+
 
     def create_training_controls(self):
         """Create the training control buttons at the bottom."""
-        proc_row = QHBoxLayout()
-        
-        # Processor label
-        proc_label = QLabel("Current processor: CUDA")
-        proc_row.addWidget(proc_label, alignment=Qt.AlignLeft)
 
-        # Training control buttons
+        proc_row = QHBoxLayout()
+
+        # ✅ Processor label (dynamique)
+        self.processor_label = QLabel(f"Current processor: {self.get_processor_name()}")
+        self.processor_label.setStyleSheet("font-size: 8pt; font-family: 'Segoe UI'; color: #222;")
+        proc_row.addWidget(self.processor_label, alignment=Qt.AlignLeft)
+
+        # ➤ Training control buttons
         button_layout = QHBoxLayout()
         for name in ["Start", "Stop", "Save Model"]:
             btn = QPushButton(name)
@@ -525,59 +988,73 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             """)
             btn.setMinimumWidth(100)
             button_layout.addWidget(btn)
-            
-            # Connect buttons to appropriate handlers
+
+            # ➤ Connect buttons
             if name == "Start":
                 btn.clicked.connect(self.start_training)
             elif name == "Stop":
                 btn.clicked.connect(self.stop_training)
+            elif name == "Save Model":
+                btn.clicked.connect(self.save_model)  # Facultatif si défini
 
         proc_row.addStretch()
         proc_row.addLayout(button_layout)
         proc_row.addStretch()
 
-        # Container for proper margins
+        # ➤ Final container with margins
         proc_container = QWidget()
         proc_layout = QVBoxLayout(proc_container)
         proc_layout.setContentsMargins(7, 0, 0, 0) 
         proc_layout.addLayout(proc_row)
-        
+
         self.main_layout.addWidget(proc_container)
 
+    def get_processor_name(self):
+        """Retourne 'CUDA~~' si GPU détecté, sinon 'CPU~~'."""
+        import tensorflow as tf
+        return "CUDA~~" if tf.config.list_physical_devices('GPU') else "CPU~~"
+    
     def create_training_monitor(self):
         """Create the training progress monitor section."""
-        # Monitor frame
+
         monitor_frame = QFrame()
         monitor_frame.setStyleSheet("""
-            background: white; 
+            background: white;
             border: 1px solid #dcdcdc;
         """)
         monitor_layout = QVBoxLayout(monitor_frame)
-        
-        # Example epoch label
-        epoch_label = QLabel(f"Epoch [{random.randint(1, 50)}/50] Train Loss: 0.{random.randint(30, 45)} Val Loss: 0.{random.randint(30, 45)}")
-        epoch_label.setStyleSheet("border: none;")  
-        monitor_layout.addWidget(epoch_label)
 
-        # Example loading label
-        loading_label = QLabel("Loading bar (~%), Training time")
-        loading_label.setStyleSheet("border: none;")  
-        monitor_layout.addWidget(loading_label)
+        # ✅ Zone texte pour les logs
+        self.training_monitor_text = QTextEdit()
+        self.training_monitor_text.setReadOnly(True)
+        self.training_monitor_text.setStyleSheet("""
+            font-family: Consolas;
+            font-size: 11px;
+            border: none;
+            background-color: #f9f9f9;
+        """)
+        monitor_layout.addWidget(self.training_monitor_text)
 
-        # Container for label
+        # ✅ Barre de progression
+        self.training_progress_bar = QProgressBar()
+        self.training_progress_bar.setValue(0)
+        self.training_progress_bar.setTextVisible(True)
+        self.training_progress_bar.setFormat("Loading bar (~%)")
+        monitor_layout.addWidget(self.training_progress_bar)
+
+        # Titre
         training_monitor_container = QWidget()
         training_monitor_layout = QVBoxLayout(training_monitor_container)
-        training_monitor_layout.setContentsMargins(7, 0, 0, 0) 
+        training_monitor_layout.setContentsMargins(7, 0, 0, 0)
         training_monitor_layout.addWidget(
             QLabel("Training Monitor", parent=self, styleSheet="font-weight: bold; font-style: italic;")
         )
 
         self.main_layout.addWidget(training_monitor_container)
 
-        # Container for monitor frame
         monitor_container = QFrame()
         monitor_container_layout = QVBoxLayout(monitor_container)
-        monitor_container_layout.setContentsMargins(7, 0, 7, 7)  
+        monitor_container_layout.setContentsMargins(7, 0, 7, 7)
         monitor_container_layout.addWidget(monitor_frame)
 
         self.main_layout.addWidget(monitor_container)
@@ -615,221 +1092,292 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         text = " → ".join(parts)
         self.top_right_label.setText(f"Progress Statement : {text}")
 
-    def go_back_to_start(self):
-        """
-        Return to the Dataset Builder page, restoring the last state if available.
-        """
-        self.hide()  # Use hide instead of close to keep the application running
-        from windows.dataset_builder_window import DatasetBuilderWindow
-        
-        # Get the current state before switching
-        saved_state = self.get_saved_state()
-        
-        self.dataset_builder_window = DatasetBuilderWindow(
-            start_window_ref=None,
-            saved_state=saved_state  # Pass the saved state back to DatasetBuilderWindow
-        )
-        self.dataset_builder_window.showMaximized()
+    def go_back(self):
+        """Go back to dataset builder while preserving state"""
+        try:
+            # Stop any running training thread
+            if hasattr(self, "train_thread") and self.train_thread.isRunning():
+                self.train_thread.stop()
+                self.train_thread.wait()
+
+            # Save current state before navigating
+            self.get_saved_state()
+
+            # Import here to avoid circular imports
+            from windows.dataset_builder_window import DatasetBuilderWindow
+
+            # Create dataset builder window with current state
+            self.dataset_builder_window = DatasetBuilderWindow(
+                saved_state=self.state,
+                dataset_path=self.dataset_path
+            )
+            self.hide()
+            self.dataset_builder_window.showMaximized()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Navigation Error", f"Failed to navigate back: {str(e)}")
+            self.show()  # Show the current window again if navigation failed
 
     def start_training(self):
-        """Simulate the training process with a progress bar."""
-        if progress_state.nn_designed:
-            reply = QMessageBox.question(
-                self,
-                "Retrain Model?",
-                "You have already trained the model. Restarting training will reset evaluator progress. Do you want to continue?",
-                QMessageBox.Yes | QMessageBox.No
+        """Lance l'entraînement réel du modèle dans un thread."""
+        try:
+            if hasattr(self, "train_thread") and self.train_thread.isRunning():
+                self.train_thread.stop()
+                if not self.train_thread.wait(1000):  # Wait 1 second
+                    QMessageBox.warning(self, "Warning", "Previous training is still stopping, please wait")
+                    return
+            
+            if progress_state.nn_designed:
+                reply = QMessageBox.question(
+                    self,
+                    "Retrain Model?",
+                    "You have already trained the model. Restarting training will reset evaluator progress. Do you want to continue?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply == QMessageBox.No:
+                    return
+                if hasattr(self, "eval_stack"):
+                    self.eval_stack.setCurrentIndex(0)  
+                
+            # 🛑 Vérifie si au moins une couche est définie
+            params, selected_files = self.get_training_parameters()
+            if params is None or not params["layers"]:
+                QMessageBox.warning(self, "Missing Layers", "Please add at least one layer before starting training.")
+                return
+
+            # 🛑 Vérifie si les hyperparamètres sont définis
+            if not hasattr(self, "hyperparams_saved") or not self.hyperparams_saved:
+                QMessageBox.warning(self, "Missing Parameters", "Please save your hyperparameters before starting training.")
+                return
+
+
+            # Si un training est déjà en cours, demander confirmation
+            if hasattr(self, "train_thread") and self.train_thread.isRunning():
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Confirm Restart")
+                msg_box.setText("Training is already running. Do you want to restart it?")
+                msg_box.setIcon(QMessageBox.Warning)
+
+                cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+                restart_btn = msg_box.addButton("Restart", QMessageBox.AcceptRole)
+                msg_box.setDefaultButton(cancel_btn)
+
+                msg_box.exec_()
+                if msg_box.clickedButton() != restart_btn:
+                    return
+
+                self.train_thread.stop()
+                self.train_thread.wait()
+
+            # Récupère les paramètres + fichiers cochés
+            params, selected_files = self.get_training_parameters()
+            if params is None or selected_files is None or not selected_files:
+                QMessageBox.warning(self, "No Files Selected", "Please select at least one .h5 file to train on.")
+                return
+
+            # Chargement des données
+            X_all, y_all, time_all = [], [], []
+            for fname in selected_files:
+                try:
+                    full_path = os.path.join(self.dataset_path, fname)
+                    X, y, full_time = load_and_preprocess_data(
+                        full_path,
+                        window_size=params["sequence_length"],
+                        stride=params["stride"]
+                    )
+
+                    # 🔍 Vérification stricte
+                    if X is None or y is None or X.size == 0 or y.size == 0:
+                        print(f"⛔ Données vides ignorées : {fname}")
+                        continue
+
+                    if full_time is None or not hasattr(full_time, "shape") or full_time.size == 0:
+                        print(f"⛔ Time manquant ou vide pour : {fname}")
+                        continue
+
+                    if X.ndim < 2 or y.ndim < 1:
+                        print(f"⛔ Dimensions incorrectes : {fname}")
+                        continue
+
+                    # ✅ Si tout est OK, on ajoute
+                    X_all.append(X)
+                    y_all.append(y)
+                    time_all.append(full_time)
+                    print(f"✅ Chargé : {fname} → X={X.shape}, y={y.shape}, time={full_time.shape}")
+
+                except Exception as e:
+                    QMessageBox.warning(self, "Error Loading File", f"Error in {fname}:\n{str(e)}")
+                    continue
+
+            if not X_all or not y_all:
+                raise ValueError("Aucun fichier n’a pu être chargé correctement. Vérifie leur contenu.")
+            X = np.concatenate(X_all)
+            y = np.concatenate(y_all)
+
+
+            # 🧼 Nettoyage des dimensions (évite erreurs concat)
+            clean_time_all = [t.squeeze() if t.ndim > 1 else t for t in time_all if t is not None]
+
+            # ✅ Concatenate ou fallback vers un time de secours
+            if clean_time_all:
+                time = np.concatenate(clean_time_all)
+            else:
+                time = np.arange(len(y))  # fallback sécuritaire
+
+            # 🧪 Vérification
+            print("Shapes → X:", X.shape, "| y:", y.shape, "| time:", time.shape)
+            assert X.shape[0] == y.shape[0] == time.shape[0], "❌ Incohérence entre X, y et time"
+
+            from sklearn.model_selection import train_test_split
+
+            # Split en 60% train, 20% val, 20% test
+            x_train_val, X_test, y_train_val, y_test, time_train_val, test_time = train_test_split(
+                X, y, time, test_size=0.2, random_state=42, shuffle=False
             )
-            if reply == QMessageBox.No:
-                return
+            print("🧪 Final test_time shape:", test_time.shape)
+            print("🧪 Final test_time first values:", test_time[:10])
+            print("🧪 Final test_time last values:", test_time[-10:])
 
-        self.training_stopped = False  # Reset the stop flag
-        progress_state.nn_designed = False
+            X_train, X_val, y_train, y_val, time_train, time_val = train_test_split(
+                x_train_val, y_train_val, time_train_val, test_size=0.25, random_state=42, shuffle=False
+            )
+
+            # Création du thread avec le timestamp
+            self.train_thread = TrainingThread(
+                X_train, X_val, X_test,
+                y_train, y_val, y_test,
+                params=params,
+                test_time=test_time  # On passe explicitement le timestamp
+            )
+
+
+            self.train_thread.setParent(self)
+            self.train_thread.training_finished.connect(self.on_training_finished)
+            self.train_thread.training_log.connect(self.append_training_log)
+            progress_state.nn_designed = False
+            self.train_thread.start()
+
+            self.nn_text_edit.setText("🧠 Training started...")
+            self.is_training = True  # Indique qu'un entraînement est en cours
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur durant l'entraînement", str(e))
+
+    def append_training_log(self, message):
+        self.training_monitor_text.append(message)
+        self.training_monitor_text.moveCursor(QTextCursor.End)
+
+        # ✅ Met à jour la barre de progression si possible
+        match = re.search(r"Epoch\s+\[(\d+)/(\d+)\]", message)
+        if match:
+            current = int(match.group(1))
+            total = int(match.group(2))
+            percent = int((current / total) * 100)
+            self.training_progress_bar.setValue(percent)
+
+    def on_training_finished(self, model, history, test_results):
+        """
+        Callback when training is finished.
         
-        # Create progress dialog
-        progress = QProgressDialog("Training Model...", "Cancel", 0, 100, self)
-        progress.setWindowTitle("Progress")
-        progress.setWindowModality(Qt.WindowModal)
-        progress.setMinimumDuration(0)
-        progress.setValue(0)
+        Args:
+            model: The trained model
+            history: Training history
+            test_results: Dictionary with test results (accuracy, report)
+        """
+        if hasattr(self, "train_thread") and self.train_thread.isRunning():
+            print("Cleaning up training thread...")
+            self.train_thread.quit()
+            self.train_thread.wait()
 
-        # Simulate training progress
-        for i in range(101):
-            if self.training_stopped:  
-                self.statusBar().showMessage("Training Model stopped.", 3000)
-                return
-            time.sleep(0.01) 
-            progress.setValue(i)
-            if progress.wasCanceled():
-                self.statusBar().showMessage("Training Model cancelled.", 3000)
-                return
+        self.is_training = False  # Indique qu'aucun entraînement n'est en cours
+        self.set_tabs_enabled(True)  # Réactive les onglets
 
-        self.statusBar().showMessage("Training Model successfully!", 3000)
-        progress_state.nn_designed = True
-        progress_state.training_started = True  
-        self.open_nn_evaluator()
+        if self.training_stopped:
+            self.nn_text_edit.setText("🛑 Training was manually stopped.")
+            progress_state.nn_designed = False
+            self.eval_stack.setCurrentIndex(0)  # Affiche placeholder (pas de plot)
+        else:
+            acc = test_results["accuracy"]
+            report = test_results["report"]
+            self.nn_text_edit.setText(f"✅ Training complete\n\nAccuracy: {acc:.3f}\n\n{report}")
+            QMessageBox.information(self, "Training Done", f"Model trained.\nTest accuracy: {acc:.2%}")
+            progress_state.nn_designed = True
+            self.trained_model = model
+            self.training_history = history
+            self.test_results = test_results
+            
+            # Fix the history keys debugging
+            print("DEBUG history keys:", history.history.keys() if history else "None")
+            
+            self.plot_training_curves(history)  # ✅ Affiche les courbes
+
+            # ✅ STOP PROPRE DU THREAD !
+            if hasattr(self, "train_thread") and self.train_thread.isRunning():
+                self.train_thread.quit()
+                self.train_thread.wait()
+
+            progress_state.trained_model = model
+            progress_state.training_history = history
+            progress_state.test_results = test_results
+            progress_state.training_started = True
+            if test_results and "true_labels" in test_results and "predictions" in test_results:
+                progress_state.test_results["y_true"] = test_results["true_labels"]
+                progress_state.test_results["y_pred"] = test_results["predictions"]
+            else:
+                progress_state.test_results["y_true"] = []
+                progress_state.test_results["y_pred"] = []
+            QMessageBox.information(self, "Training Complete", "Training is finished. You can now view results in the 'NN Evaluator' tab.")
+
 
     def stop_training(self):
-        """Handle stop training button click with confirmation dialog."""
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("Confirm Stop")
-        msg_box.setText("Are you sure to stop training?")
-        msg_box.setIcon(QMessageBox.Question) 
+        """Stop training with user confirmation."""
+        if hasattr(self, "train_thread") and self.train_thread.isRunning():
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Confirm Stop")
+            msg_box.setText("Are you sure you want to stop training?")
+            msg_box.setIcon(QMessageBox.Question)
 
-        # Custom buttons
-        discard_button = msg_box.addButton("Discard", QMessageBox.RejectRole)
-        yes_button = msg_box.addButton("Yes", QMessageBox.YesRole)
-        msg_box.setDefaultButton(discard_button)
-        
-        # Show dialog and handle response
-        msg_box.exec_()
+            # Boutons personnalisés
+            discard_button = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+            yes_button = msg_box.addButton("Yes", QMessageBox.YesRole)
+            msg_box.setDefaultButton(discard_button)
 
-        if msg_box.clickedButton() == yes_button:
-            self.training_stopped = True
-            print("Training stopped")  
-        else:
-            print("Stop cancelled")
+            msg_box.exec_()
 
-    def open_nn_evaluator(self):
-        """Open the Neural Network Evaluator window."""
-        from windows.nn_evaluator_window import NeuralNetworkEvaluator
-        self.hide()
-        self.nn_evaluator_window = NeuralNetworkEvaluator()
-        self.nn_evaluator_window.showMaximized()
-
-    def save_hyperparameters(self):
-        # Save current UI state
-        self.state["hyperparameters"] = {
-            "layer_number": self.layer_number_input.text(),
-            "sequence_length": self.sequence_length_input.text(),
-            "batch_size": self.batch_size_input.text(),
-            "epoch_number": self.epoch_number_input.text()
-        }
-        
-        self.state["optimizer"] = self.optimizer_combo.currentText()
-        
-        # Save loss function
-        if self.classification_loss_combo.currentIndex() >= 0:
-            self.state["loss_function"] = self.classification_loss_combo.currentText()
-            loss_type = "Classification"
-        elif self.regression_loss_combo.currentIndex() >= 0:
-            self.state["loss_function"] = self.regression_loss_combo.currentText()
-            loss_type = "Regression"
-        else:
-            self.state["loss_function"] = None
-            loss_type = "None"
-        
-        # Save checkbox states
-        self.state["selected_files"] = [
-            self.file_list.item(i).text() 
-            for i in range(self.file_list.count())
-            if self.file_list.item(i).checkState() == Qt.Checked
-        ]
-        
-        # Update summary text in state
-        self.state["summary_text"] = f"""Hyperparameters saved:
-• Optimizer: {self.state["optimizer"]}
-• Loss Function: {self.state["loss_function"]} ({loss_type})
-• Layers: {self.state["hyperparameters"]["layer_number"]}
-• Seq Length: {self.state["hyperparameters"]["sequence_length"]}
-• Batch Size: {self.state["hyperparameters"]["batch_size"]}
-• Epochs: {self.state["hyperparameters"]["epoch_number"]}
-• Selected Files: {len(self.state["selected_files"])}/{self.file_list.count()}"""
-        
-        self.update_summary_display()
-        progress_state.nn_designed = True
-        QMessageBox.information(self, "Saved", "The hyperparameters have been saved successfully!")
-
-    def restore_state(self):
-        """Precisely restore all UI elements"""
-        # Restore parameters
-        hp = self.state["hyperparameters"]
-        self.layer_number_input.setText(hp["layer_number"])
-        self.sequence_length_input.setText(hp["sequence_length"])
-        self.batch_size_input.setText(hp["batch_size"])
-        self.epoch_number_input.setText(hp["epoch_number"])
-        
-        # Restore optimizer
-        if self.optimizer_combo.findText(self.state["optimizer"]) >= 0:
-            self.optimizer_combo.setCurrentText(self.state["optimizer"])
-        
-        # Restore loss function
-        if self.state["loss_function"]:
-            if self.classification_loss_combo.findText(self.state["loss_function"]) >= 0:
-                self.classification_loss_combo.setCurrentText(self.state["loss_function"])
-                self.regression_loss_combo.setCurrentIndex(-1)
-            elif self.regression_loss_combo.findText(self.state["loss_function"]) >= 0:
-                self.regression_loss_combo.setCurrentText(self.state["loss_function"])
-                self.classification_loss_combo.setCurrentIndex(-1)
-        
-        # Restore checkboxes after files load
-        QTimer.singleShot(100, self.restore_checkboxes)
-
-    def restore_checkboxes(self):
-        """Exactly restore previous checkbox states"""
-        if not hasattr(self, 'file_list'):
-            return
-            
-        # Create lookup for performance
-        selected_files_set = set(self.state["selected_files"])
-        
-        for i in range(self.file_list.count()):
-            item = self.file_list.item(i)
-            item.setCheckState(Qt.Checked if item.text() in selected_files_set else Qt.Unchecked)
-
-    def update_summary_display(self):
-        """Always keep summary updated with current state"""
-        self.nn_text_edit.setText(self.state["summary_text"])
-
-    def display_saved_summary(self):
-        """Display the saved summary in the TextEdit widget."""
-        if not (self.state["optimizer"] or self.state["loss_function"] or any(self.state["hyperparameters"].values())):
-            return
-            
-        loss_type = ""
-        if self.state["loss_function"]:
-            if self.state["loss_function"] in self.loss_function_categories["Classification"]:
-                loss_type = "Classification"
-            elif self.state["loss_function"] in self.loss_function_categories["Regression"]:
-                loss_type = "Regression"
-        
-        summary = (
-            f"Hyperparameters:\n"
-            f"• Optimizer: {self.state['optimizer'] or 'Not set'}\n"
-            f"• Loss Function: {self.state['loss_function'] or 'Not set'} {f'({loss_type})' if loss_type else ''}\n"
-            f"• Layer Number: {self.state['hyperparameters'].get('layer_number', 'Not set')}\n"
-            f"• Sequence Length: {self.state['hyperparameters'].get('sequence_length', 'Not set')}\n"
-            f"• Batch Size: {self.state['hyperparameters'].get('batch_size', 'Not set')}\n"
-            f"• Epoch Number: {self.state['hyperparameters'].get('epoch_number', 'Not set')}\n"
-            f"• Selected Files: {', '.join(self.state['selected_files']) if self.state['selected_files'] else 'None'}"
-        )
-        
-        self.nn_text_edit.setText(summary)
-        print("Displayed saved summary")
+            if msg_box.clickedButton() == yes_button:
+                self.train_thread.stop()
+                self.training_stopped = True
+                QMessageBox.information(self, "Training Stopped", "Training was manually stopped.")
+                self.nn_text_edit.setText("Training was manually stopped.")
+            else:
+                print("Training stop cancelled.")
 
     def auto_select_files(self):
-        """Modified auto-select that immediately saves state without a pop-up."""
+        """Automatically select a percentage of files for training."""
         try:
-            percentage = int(self.training_percentage_input.text().strip('%'))
+            # Parse percentage input
+            percentage = float(self.training_percentage_input.text().strip().replace('%', ''))
+            if not (0 < percentage <= 100):
+                raise ValueError
+                
+            # Calculate number of files to select
             total = self.file_list.count()
-            to_select = max(1, int(total * percentage / 100))
+            to_check = round((percentage / 100) * total)
             
-            # Get all current items
+            # Get all items and randomly select the specified number
             all_items = [self.file_list.item(i) for i in range(total)]
+            selected = random.sample(all_items, to_check)
             
-            # Random selection
-            selected = random.sample(all_items, to_select)
-            
-            # Update UI and state
-            self.state["selected_files"] = []
+            # Update check states
             for item in all_items:
-                checked = item in selected
-                item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
-                if checked:
-                    self.state["selected_files"].append(item.text())
-                    
+                item.setCheckState(Qt.Checked if item in selected else Qt.Unchecked)
+                
         except ValueError:
-            QMessageBox.warning(self, "Error", "Please enter a valid percentage")
+            QMessageBox.warning(
+                self, 
+                "Invalid Input", 
+                "Please enter a valid percentage between 0 and 100."
+            )
 
     def populate_file_list(self):
         """
@@ -837,15 +1385,13 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         Only called if dataset_path was provided during initialization.
         """
         self.file_list.clear()
-        if self.dataset_path and os.path.exists(self.dataset_path):
+        if os.path.exists(self.dataset_path):
             for filename in os.listdir(self.dataset_path):
                 if filename.endswith(".h5"):
                     item = QListWidgetItem(filename)
                     item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                     item.setCheckState(Qt.Unchecked)
                     self.file_list.addItem(item)
-        else:
-            QMessageBox.warning(self, "Error", "Dataset folder does not exist or is invalid.")
 
     def populate_file_list_with_paths(self, file_paths):
         """
@@ -860,30 +1406,124 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
             self.file_list.addItem(item)
+    
+    def get_training_parameters(self):
+        """Retourne tous les paramètres nécessaires à l'entraînement."""
+        if "hyperparameters" not in self.state:
+            QMessageBox.warning(self, "Missing Hyperparameters", "Please save your hyperparameters before starting training.")
+            return None, None
+        hp = self.state["hyperparameters"]
+        params = {
+            "optimizer": self.state["optimizer"],
+            "loss_function": self.state["loss_function"],
+            "loss_type": "Classification" if self.classification_loss_combo.currentIndex() >= 0 else "Regression",
+            "layers": hp.get("layers", []),
+            "sequence_length": int(hp.get("sequence_length", 50)),
+            "stride": int(hp.get("stride", 5)),
+            "batch_size": int(hp.get("batch_size", 32)),
+            "epochs": int(hp.get("epoch_number", 50)),
+            "learning_rate": float(hp.get("learning_rate", 0.001))
+        }
+        selected_files = [
+            self.file_list.item(i).text()
+            for i in range(self.file_list.count())
+            if self.file_list.item(i).checkState() == Qt.Checked
+        ]
+        return params, selected_files
 
-    def get_saved_state(self):
-        """Return complete current state"""
-        return self.state
+    def plot_training_curves(self, history):
+        self.eval_stack.setCurrentIndex(1)
 
-    def on_loss_function_changed(self, is_classification):
-        """Handle when either loss function combo box changes."""
-        if is_classification:
-            # Classification loss was selected - clear regression
-            if self.classification_loss_combo.currentIndex() >= 0:
-                self.regression_loss_combo.blockSignals(True)  # Temporarily block signals
-                self.regression_loss_combo.setCurrentIndex(-1)
-                self.regression_loss_combo.blockSignals(False)  # Re-enable signals
-                self.state["loss_function"] = self.classification_loss_combo.currentText()
+        self.eval_canvas.figure.clf()
+        ax1 = self.eval_canvas.figure.add_subplot(2, 1, 1)
+        ax2 = self.eval_canvas.figure.add_subplot(2, 1, 2)
+
+        # Access history through the history attribute
+        history_dict = history.history
+
+        # Loss
+        ax1.plot(history_dict['loss'], label='Train Loss', color='blue')
+        ax1.plot(history_dict['val_loss'], label='Validation Loss', color='orange')
+        ax1.set_title("Training and Validation Loss")
+        ax1.set_xlabel("Epoch")
+        ax1.set_ylabel("Loss")
+        ax1.legend()
+        ax1.grid(True)
+
+        # Accuracy (handle both 'accuracy' and 'sparse_categorical_accuracy')
+        acc_key = None
+        val_acc_key = None
+        if 'accuracy' in history_dict:
+            acc_key = 'accuracy'
+            val_acc_key = 'val_accuracy'
+        elif 'sparse_categorical_accuracy' in history_dict:
+            acc_key = 'sparse_categorical_accuracy'
+            val_acc_key = 'val_sparse_categorical_accuracy'
+
+        if acc_key and val_acc_key and acc_key in history_dict and val_acc_key in history_dict:
+            ax2.plot(history_dict[acc_key], label='Train Accuracy', color='blue')
+            ax2.plot(history_dict[val_acc_key], label='Validation Accuracy', color='orange')
+            ax2.set_title("Training and Validation Accuracy")
+            ax2.set_xlabel("Epoch")
+            ax2.set_ylabel("Accuracy")
+            ax2.legend()
+            ax2.grid(True)
         else:
-            # Regression loss was selected - clear classification
-            if self.regression_loss_combo.currentIndex() >= 0:
-                self.classification_loss_combo.blockSignals(True)  # Temporarily block signals
-                self.classification_loss_combo.setCurrentIndex(-1)
-                self.classification_loss_combo.blockSignals(False)  # Re-enable signals
-                self.state["loss_function"] = self.regression_loss_combo.currentText()
+            ax2.text(0.5, 0.5, "No accuracy metric available in history.",
+                     ha='center', va='center', fontsize=12)
+            ax2.set_axis_off()
 
-    def clear_loss_function_selection(self):
-        """Clear both loss function selections"""
-        self.classification_loss_combo.setCurrentIndex(-1)
-        self.regression_loss_combo.setCurrentIndex(-1)
-        self.state["loss_function"] = None
+        self.eval_canvas.figure.tight_layout()
+        self.eval_canvas.draw()
+
+    def save_model(self):
+        """Enregistre le modèle entraîné + historique + résultats dans un fichier .h5 + .json."""
+
+        model = getattr(self, "trained_model", None)
+        history = getattr(self, "training_history", None)
+        results = getattr(self, "test_results", None)
+
+        if model is None or history is None or results is None:
+            QMessageBox.warning(self, "Nothing to Save", "No trained model found. Please train before saving.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Model", "", "H5 Files (*.h5)")
+        if not file_path:
+            return
+
+        try:
+            save_model_and_results(model, history, results, file_path)
+            QMessageBox.information(self, "Success", "Model and results saved successfully.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save model:\n{str(e)}")
+
+    def closeEvent(self, event):
+        # Arrêt propre du thread d'entraînement si encore actif
+        if hasattr(self, "train_thread") and self.train_thread is not None:
+            if self.train_thread.isRunning():
+                self.train_thread.stop()
+                self.train_thread.quit()
+                self.train_thread.wait()
+        event.accept()
+
+    def restore_checkboxes(self):
+        """Restore checkbox states for file list."""
+        selected_files_set = set(self.state.get("selected_files", []))
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            item.setCheckState(Qt.Checked if item.text() in selected_files_set else Qt.Unchecked)
+
+    def set_tabs_enabled(self, enabled: bool):
+        if hasattr(self, "header"):
+            for tab in self.header.tabs.values():
+                tab_label = tab.layout().itemAt(0).widget()
+                tab_label.setEnabled(enabled)
+
+    def cleanup_training_thread(self):
+        """Arrête proprement le thread d'entraînement s'il existe."""
+        if hasattr(self, "train_thread") and self.train_thread is not None:
+            if self.train_thread.isRunning():
+                self.train_thread.stop()
+                self.train_thread.quit()
+                self.train_thread.wait()
+            self.train_thread = None

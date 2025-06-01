@@ -4,7 +4,6 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QTextCursor, QIntValidator, QFont
-from windows.add_data_window import AddDataWindow  
 from windows.nn_designer_window import NeuralNetworkDesignerWindow
 import re
 import time
@@ -122,8 +121,21 @@ class DatasetBuilderWindow(QMainWindow):
 
         # Bottom buttons
         self.create_button_row(container_layout)
-        
+        self.apply_filters_to_raw_data()
         main_layout.addWidget(content_container)
+        
+    def apply_filters_to_raw_data(self):
+        """
+        Appliquer des filtres aux données brutes pour réduire les biais et améliorer leur qualité.
+        """
+        from functions import process_emg_signal  # Importer la fonction de traitement des signaux EM
+        filtered_data = []
+        for file in self.state["all_files"]:
+            # Exemple d'appel à une méthode de filtrage spécifique
+            processed_data = process_emg_signal(file)
+            filtered_data.append(processed_data)
+        self.state["filtered_files"] = filtered_data
+
 
     def create_title_progress_layout(self, parent_layout):
         """
@@ -248,7 +260,7 @@ class DatasetBuilderWindow(QMainWindow):
 
     def create_io_panel(self, parent_layout):
         """
-        Create the right panel for Input/Ouput selection.
+        Create the right panel with a white background, matching height, and simplified layout for Input/Output Selection.
         """
         right_panel = QVBoxLayout()
 
@@ -289,7 +301,7 @@ class DatasetBuilderWindow(QMainWindow):
         input_layout = QVBoxLayout()
         input_layout.setContentsMargins(10, 10, 10, 10)
 
-        # EMG/IMU checkboxes 
+        # EMG/IMU checkboxes in horizontal layout
         checkbox_row = QHBoxLayout()
         checkbox_row.setAlignment(Qt.AlignTop)  
 
@@ -395,14 +407,22 @@ class DatasetBuilderWindow(QMainWindow):
         status_bar.addPermanentWidget(status_label, 1)
 
     def go_back_to_start(self):
-        """Return to the start window without exiting the application."""
-        self.hide()  
-        if self.start_window_ref:
-            self.start_window_ref.showMaximized()  
+        reply = QMessageBox.question(
+            self,
+            "Confirm Return",
+            "Are you sure you want to return to the start? All unsaved progress in Neural Network Designer will be lost.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.No:
+            return  # Annule le retour
+
+        self.hide()
+        if hasattr(self, 'parent_window') and self.parent_window is not None:
+            self.parent_window.showMaximized()
         else:
             from windows.start_window import StartWindow
-            self.start_window_ref = StartWindow()
-            self.start_window_ref.showMaximized()
+            self.start_window = StartWindow()
+            self.start_window.showMaximized()
 
     def open_add_data_window(self):
         """
@@ -450,8 +470,8 @@ class DatasetBuilderWindow(QMainWindow):
         Update the progress label showing the current workflow step.
         
         Args:
-            active_step (str): The currently active step (orange)
-            completed_steps (list): List of completed steps (green)
+            active_step (str): The currently active step (highlighted)
+            completed_steps (list): List of completed steps (shown in green)
         """
         steps = ["Dataset Builder", "NN Designer", "NN Evaluator"]
         completed_steps = completed_steps or []
@@ -476,9 +496,23 @@ class DatasetBuilderWindow(QMainWindow):
         Filter the .h5 files based on selected inputs, save the configuration to a .txt file,
         and navigate to the NN Designer page.
         """
+
         if not self.state["all_files"]:
             QMessageBox.warning(self, "No Files", "No files available to build the dataset.")
             return
+
+        # ✅ 1. Vérifie si un dataset a déjà été créé dans progress_state
+        import windows.progress_state as progress_state
+        if getattr(progress_state, "dataset_built", False) and getattr(progress_state, "dataset_path", None):
+            if os.path.exists(progress_state.dataset_path):
+                reply = QMessageBox.question(
+                    self,
+                    "Dataset Already Exists",
+                    "A dataset already exists. Do you want to rebuild it?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply == QMessageBox.No:
+                    return  # ⛔ Ne continue pas si l'utilisateur refuse
 
         # Debug: Print all file names
         print("Files to process:")
@@ -518,15 +552,94 @@ class DatasetBuilderWindow(QMainWindow):
                             if isinstance(item, h5py.Group):
                                 # Recursively search in sub-groups
                                 search_and_filter(item, trial_data)
-                            elif isinstance(item, h5py.Dataset) and key in selected_inputs + selected_outputs:
+                             # ''' Harry + TIME Data '''
+                            elif isinstance(item, h5py.Dataset) and key in selected_inputs + selected_outputs or key == "time":
                                 trial_data[key] = item[()]
 
+                    # === DÉBUT DU BLOC SENSOR/CONTROLLER À COMMENTER ===
+                    # from functions import generate_fixed_sequence_labels, convert_labels_to_int, phase_to_int
+                    # # ✅ Bloc spécifique pour les fichiers Sensor / Controller
+                    # if "Sensor" in h5_file and "Controller" in h5_file:
+                    #     sensor_data_full = {}
+                    #     controller_data_full = {}
+                    #     search_and_filter(h5_file["Sensor"], sensor_data_full)
+                    #     search_and_filter(h5_file["Controller"], controller_data_full)
+                    #
+                    #     if "button_ok" in controller_data_full and "time" in sensor_data_full:
+                    #         import numpy as np
+                    #         from functions import generate_fixed_sequence_labels, convert_labels_to_int, phase_to_int
+                    #
+                    #         ok = np.squeeze(controller_data_full["button_ok"])
+                    #         time = np.squeeze(sensor_data_full["time"])
+                    #         press_indices = np.where(np.diff(ok.astype(int)) == 1)[0] + 1
+                    #
+                    #         num_trials = len(press_indices) // 4
+                    #         for trial_idx in range(num_trials):
+                    #             trial_press = press_indices[trial_idx*4:(trial_idx+1)*4]
+                    #             if len(trial_press) < 4:
+                    #                 continue  # trial incomplet
+                    #
+                    #             start = trial_press[0] - 500 if trial_press[0] - 500 > 0 else 0
+                    #             end = trial_press[3] + 1000 if trial_press[3] + 1000 < len(ok) else len(ok)
+                    #
+                    #             # Extraire les signaux pour ce trial
+                    #             trial_sensor = {k: np.array(sensor_data_full[k])[start:end] for k in sensor_data_full if k != "label" and k != "label_int"}
+                    #             trial_controller = {k: np.array(controller_data_full[k])[start:end] for k in controller_data_full if k != "label" and k != "label_int"}
+                    #
+                    #             # Vérifier qu'il y a exactement 4 pressions dans la fenêtre extraite
+                    #             trial_ok = np.squeeze(trial_controller["button_ok"])
+                    #             trial_press_in_window = np.where(np.diff(trial_ok.astype(int)) == 1)[0] + 1
+                    #             if len(trial_press_in_window) != 4:
+                    #                 print(f"⚠️ Trial {trial_idx} ignoré : {len(trial_press_in_window)} pressions trouvées dans la fenêtre")
+                    #                 continue
+                    #
+                    #             # Générer les labels
+                    #             try:
+                    #                 temp = {
+                    #                     "button_ok": trial_controller["button_ok"],
+                    #                     "time": trial_sensor["time"]
+                    #                 }
+                    #                 temp["label"] = generate_fixed_sequence_labels(temp, fs=100)
+                    #                 temp = convert_labels_to_int(temp, phase_to_int)
+                    #                 trial_controller["label"] = temp["label"]
+                    #                 trial_controller["label_int"] = temp["label_int"]
+                    #                 trial_sensor["label"] = temp["label"]
+                    #                 trial_sensor["label_int"] = temp["label_int"]
+                    #             except Exception as e:
+                    #                 print(f"⚠️ Erreur lors de la génération des labels pour trial {trial_idx} : {e}")
+                    #                 continue
+                    #
+                    #             # Ajoute chaque trial comme un groupe trial_xxx
+                    #             trial_name = f"trial_{trial_idx:03d}"
+                    #             filtered_data[trial_name] = {}
+                    #             filtered_data[trial_name]["Sensor"] = trial_sensor
+                    #             filtered_data[trial_name]["Controller"] = trial_controller
+                    # === FIN DU BLOC SENSOR/CONTROLLER À COMMENTER ===
+
                     # Iterate through trials and apply the recursive search
+                    from functions import generate_fixed_sequence_labels, convert_labels_to_int, phase_to_int
                     for trial in h5_file.keys():
                         trial_data = {}
                         search_and_filter(h5_file[trial], trial_data)
+
+                        # Ajout des labels intelligents
+                        if "button_ok" in trial_data and "time" in trial_data:
+                            try:
+                                label_data = {
+                                    "button_ok": trial_data["button_ok"],
+                                    "time": trial_data["time"]
+                                }
+                                label_str = generate_fixed_sequence_labels(label_data, fs=100)
+                                label_data["label"] = label_str
+                                label_data = convert_labels_to_int(label_data, phase_to_int)
+                                trial_data["label"] = label_data["label"]
+                                trial_data["label_int"] = label_data["label_int"]
+                            except Exception as e:
+                                print(f"⚠️ Erreur génération de labels dans {trial} : {e}")
+
                         if trial_data:
                             filtered_data[trial] = trial_data
+
 
                     # Save the filtered data to a file in the dataset folder
                     os.makedirs(dataset_folder, exist_ok=True)  # Create the dataset folder only when needed
@@ -657,10 +770,7 @@ class DatasetBuilderWindow(QMainWindow):
     def show_page(self):
         """Display the current page of files in the list widget."""
         self.file_list.clear()
-        start_index = self.state["current_page"] * self.items_per_page
-        end_index = start_index + self.items_per_page
-        page_files = self.state["all_files"][start_index:end_index]  # Slice the files for the current page
-        self.file_list.addItems(page_files)  # Add only the files for the current page
+        self.file_list.addItems(self.state["all_files"])  
         self.update_pagination_buttons()
 
     def show_previous_page(self):
