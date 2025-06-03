@@ -78,6 +78,14 @@ class Header(QWidget):
         if reply == QMessageBox.No:
             return  # Annule le retour
 
+         # 🧼 Reset global state
+        import windows.progress_state as progress_state
+        progress_state.dataset_built = False
+        progress_state.nn_designed = False
+        progress_state.training_started = False
+        progress_state.trained_model = None
+        progress_state.training_history = None
+        progress_state.test_results = None
         if self.parent_window:
             parent = self.parent_window.window()
             # HARRY: Cleanup training thread before closing

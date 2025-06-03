@@ -41,6 +41,13 @@ class DatasetBuilderWindow(QMainWindow):
 
         if saved_state:
             self.state.update(saved_state)
+            if saved_state.get("returned_from_nn_designer"):
+                if "original_files" in saved_state:
+                    self.state["all_files"] = saved_state["original_files"]
+            else:
+                # Cas d’un dataset déjà construit (chargé depuis start_window)
+                self.state["all_files"] = []
+
 
         # Pagination variables
         self.items_per_page = 100  # Default number of items per page
@@ -121,7 +128,6 @@ class DatasetBuilderWindow(QMainWindow):
 
         # Bottom buttons
         self.create_button_row(container_layout)
-        self.apply_filters_to_raw_data()
         main_layout.addWidget(content_container)
         
     def apply_filters_to_raw_data(self):
@@ -681,7 +687,7 @@ class DatasetBuilderWindow(QMainWindow):
                         rel_path = os.path.relpath(filtered_file_path, project_root)
                     else:
                         rel_path = f"filtered_{file_name}"
-                    filtered_files.append(rel_path)
+                    filtered_files.append(str(rel_path))
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Error processing file {file_name}: {e}")
                 continue
@@ -711,7 +717,10 @@ class DatasetBuilderWindow(QMainWindow):
                 "dataset_path": dataset_folder,
                 "selected_files": [] # Tous cochés par défaut
             })
-            saved_state["all_files"] = filtered_files[:]
+   
+            saved_state["filtered_files"] = [str(f) for f in filtered_files]
+            saved_state["original_files"] = [str(f) for f in self.state["all_files"]]
+            saved_state["returned_from_nn_designer"] = True
             progress_state.dataset_built = True
             from windows.nn_designer_window import NeuralNetworkDesignerWindow
             self.nn_designer = NeuralNetworkDesignerWindow(
@@ -739,6 +748,7 @@ class DatasetBuilderWindow(QMainWindow):
             saved_state=saved_state
         )
         # Pass filtered file names to NN Designer
+        print("Filtered files passed to NN Designer:", self.state["filtered_files"])
         self.nn_designer_window.populate_file_list_with_paths(filtered_files)  
         self.nn_designer_window.showMaximized()
         self.hide()
@@ -808,7 +818,8 @@ class DatasetBuilderWindow(QMainWindow):
         start = self.state["current_page"] * self.items_per_page
         end = start + self.items_per_page
         for i, file in enumerate(files[start:end]):
-            item = QListWidgetItem(file if isinstance(file, str) else str(file))
+            item = QListWidgetItem(os.path.basename(file))  # ✅ Affiche nom uniquement
+            item.setData(Qt.UserRole, file)                 # ✅ Garde chemin complet pour les traitements internes
             self.file_list.addItem(item)
 
     def show_previous_page(self):

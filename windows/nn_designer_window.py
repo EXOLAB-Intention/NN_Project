@@ -156,9 +156,9 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             self.add_layer_combo_row(config=layer_cfg)
 
         # --- Ajout pour restaurer la liste des fichiers et les cases cochées ---
-        all_files = self.state.get("all_files", None)
+        all_files = self.state.get("filtered_files") or self.state.get("all_files") or []
         selected_files = self.state.get("selected_files", [])
-        if all_files is not None:
+        if all_files:
             self.populate_file_list_with_paths(all_files, selected_files)
         elif self.dataset_path:
             self.populate_file_list()
@@ -1519,6 +1519,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
 
     def populate_file_list_with_paths(self, file_paths, checked_files=None):
         self.file_list.clear()
+        print("Files received in NN Designer:", file_paths)
         checked_files_set = set([os.path.normpath(f) for f in (checked_files or [])])
         self.file_name_to_path = {}
 
@@ -1538,6 +1539,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             return
 
         for rel_path in file_paths:
+            rel_path = str(rel_path) 
             # rel_path peut être 'filtered_xxx.h5' ou 'subfolder/filtered_xxx.h5'
             abs_path = os.path.normpath(os.path.join(project_root, rel_path))
             filename = os.path.basename(rel_path)
