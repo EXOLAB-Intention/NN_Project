@@ -21,6 +21,7 @@ from training_core.training_utils import (
         )          
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import re
+from matplotlib.gridspec import GridSpec
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from windows.nn_evaluator_window import NeuralNetworkEvaluator
@@ -107,6 +108,10 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             "test_results": None,
             "trained_model": None
         }
+        
+        if saved_state and saved_state.get("training_started"):
+            progress_state.training_started = True
+            
         # Initialize layer-related attributes
         self.layer_type_combos = []  # Stores layer type combo boxes
         self.layer_combo_rows = []  # Stores layer rows
@@ -150,7 +155,15 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         for layer_cfg in hp.get("layers", []):
             self.add_layer_combo_row(config=layer_cfg)
 
+        # --- Ajout pour restaurer la liste des fichiers et les cases cochées ---
+        all_files = self.state.get("all_files", None)
+        selected_files = self.state.get("selected_files", [])
+        if all_files is not None:
+            self.populate_file_list_with_paths(all_files, selected_files)
+        elif self.dataset_path:
+            self.populate_file_list()
         QTimer.singleShot(100, self.restore_checkboxes)
+        # ----------------------------------------------------------------------
 
         self.training_monitor_text.setText(self.state.get("training_monitor_logs", ""))
         self.training_progress_bar.setValue(self.state.get("training_progress", 0))
@@ -161,6 +174,19 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         history = self.state.get("training_history", None)
         if history:
             self.plot_training_curves(history)
+        if "current_page_index" in self.state:
+            self.stacked_widget.setCurrentIndex(self.state["current_page_index"])
+        if "eval_plot_state" in self.state:
+            self.eval_stack.setCurrentIndex(self.state["eval_plot_state"])
+        if "training_log" in self.state:
+            self.training_monitor_text.setText(self.state["training_log"])
+        if "progress_value" in self.state:
+            self.training_progress_bar.setValue(self.state["progress_value"])
+        # ✅ Restaure les objets pour pouvoir sauvegarder le modèle
+        self.trained_model = self.state.get("trained_model", None)
+        self.training_history = self.state.get("training_history", None)
+        self.test_results = self.state.get("test_results", None)
+
 
     def clear_layer_combos(self):
         """Remove all layer combo rows."""
@@ -415,20 +441,26 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             self.state["loss_function"] = self.regression_loss_combo.currentText()
         else:
             self.state["loss_function"] = None
+        # Sauvegarde les chemins relatifs cochés
         self.state["selected_files"] = [
-            self.file_list.item(i).text()
+            self.file_list.item(i).data(Qt.UserRole)
             for i in range(self.file_list.count())
             if self.file_list.item(i).checkState() == Qt.Checked
         ]
-        self.state["training_history"] = getattr(self, "training_history", None)  # Save training history
+        # Sauvegarde tous les fichiers affichés (pour restauration)
+        self.state["all_files"] = [
+            self.file_list.item(i).data(Qt.UserRole)
+            for i in range(self.file_list.count())
+        ]
+        self.state["training_history"] = getattr(self, "training_history", None)
         self.state["test_results"] = getattr(self, "test_results", None)
         self.state["trained_model"] = getattr(self, "trained_model", None)
-        self.state["training_monitor_logs"] = self.training_monitor_text.toPlainText()  # Save training monitor logs
-        self.state["training_progress"] = self.training_progress_bar.value()  # Save progress bar value
-        self.state["summary_text"] = self.nn_text_edit.toPlainText()  # Save summary display text
-        self.state["eval_plot_index"] = self.eval_stack.currentIndex()  # Save evaluation plot state
+        self.state["training_monitor_logs"] = self.training_monitor_text.toPlainText()
+        self.state["training_progress"] = self.training_progress_bar.value()
+        self.state["summary_text"] = self.nn_text_edit.toPlainText()
+        self.state["eval_plot_index"] = self.eval_stack.currentIndex()
+        self.state["training_started"] = progress_state.training_started
         return self.state
-
 
     def update_summary_display(self):
         """Update the summary text area with current state."""
@@ -473,7 +505,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             "learning_rate": float(hp.get("learning_rate", 0.001))
         }
         selected_files = [
-            self.file_list.item(i).text()
+            self.file_list.item(i).data(Qt.UserRole)
             for i in range(self.file_list.count())
             if self.file_list.item(i).checkState() == Qt.Checked
         ]
@@ -1206,34 +1238,38 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             # Load and prepare data
             X_all, y_all, time_all = [], [], []
             for fname in selected_files:
+                print(f"[DEBUG] About to process: {fname}")
+                # Utilise le mapping pour obtenir le chemin absolu correct
+                abs_path = self.file_name_to_path.get(fname)
+                print(f"[DEBUG] Absolute path: {abs_path}")
+                print(f"[DEBUG] File exists: {os.path.exists(abs_path) if abs_path else 'N/A'}")
                 try:
-                    full_path = os.path.join(self.dataset_path, fname)
                     X, y, full_time = load_and_preprocess_data(
-                        full_path,
+                        abs_path,
                         window_size=params["sequence_length"],
                         stride=params["stride"]
                     )
-
-                    # Validate data
-                    if X is None or y is None or X.size == 0 or y.size == 0:
-                        print(f"⛔ Empty data ignored: {fname}")
-                        continue
-                    if full_time is None or not hasattr(full_time, "shape") or full_time.size == 0:
-                        print(f"⛔ Missing or empty time data for: {fname}")
-                        continue
-                    if X.ndim < 2 or y.ndim < 1:
-                        print(f"⛔ Incorrect dimensions: {fname}")
-                        continue
-
-                    # Add valid data
-                    X_all.append(X)
-                    y_all.append(y)
-                    time_all.append(full_time)
-                    print(f"✅ Loaded: {fname} → X={X.shape}, y={y.shape}, time={full_time.shape}")
-
+                    print(f"[DEBUG] Loaded: {abs_path} X={X.shape if X is not None else None}")
                 except Exception as e:
-                    QMessageBox.warning(self, "Error Loading File", f"Error in {fname}:\n{str(e)}")
+                    print(f"[EXCEPTION] Error loading {abs_path}: {e}")
                     continue
+
+                # Validate data
+                if X is None or y is None or X.size == 0 or y.size == 0:
+                    print(f"⛔ Empty data ignored: {fname}")
+                    continue
+                if full_time is None or not hasattr(full_time, "shape") or full_time.size == 0:
+                    print(f"⛔ Missing or empty time data for: {fname}")
+                    continue
+                if X.ndim < 2 or y.ndim < 1:
+                    print(f"⛔ Incorrect dimensions: {fname}")
+                    continue
+
+                # Add valid data
+                X_all.append(X)
+                y_all.append(y)
+                time_all.append(full_time)
+                print(f"✅ Loaded: {fname} → X={X.shape}, y={y.shape}, time={full_time.shape}")
 
             # Validate loaded data
             if not X_all or not y_all:
@@ -1338,6 +1374,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                 progress_state.training_history = history
                 progress_state.test_results = test_results
                 progress_state.training_started = True
+                self.state["training_started"] = True
 
                 # Save test results
                 if test_results and "true_labels" in test_results and "predictions" in test_results:
@@ -1441,35 +1478,122 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                 "Invalid Input", 
                 "Please enter a valid percentage between 0 and 100."
             )
+    def get_selected_files(self):
+        """Retourne la liste des chemins absolus des fichiers sélectionnés."""
+        selected_files = []
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            if item.checkState() == Qt.Checked:
+                filename = item.text()
+                abs_path = os.path.join(self.dataset_path, filename)
+                selected_files.append(abs_path)
+        return selected_files
 
     def populate_file_list(self):
-        """
-        Populate the file list with .h5 files from the dataset folder.
-        Only called if dataset_path was provided during initialization.
-        """
         self.file_list.clear()
+        self.file_name_to_path = {}
         if os.path.exists(self.dataset_path):
+            # Trouver la racine NN_Project
+            def find_nn_project_root(path):
+                path = os.path.abspath(path)
+                while path and os.path.basename(path) != "NN_Project":
+                    parent = os.path.dirname(path)
+                    if parent == path:
+                        return None
+                    path = parent
+                return path
+            project_root = find_nn_project_root(self.dataset_path)
+            if not project_root:
+                QMessageBox.critical(self, "Erreur", "Impossible de trouver le dossier NN_Project.")
+                return
             for filename in os.listdir(self.dataset_path):
-                if filename.endswith(".h5"):
+                if filename.endswith(".h5") and filename.startswith("filtered_"):
+                    abs_path = os.path.join(self.dataset_path, filename)
+                    rel_path = os.path.relpath(abs_path, project_root)
                     item = QListWidgetItem(filename)
                     item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                     item.setCheckState(Qt.Unchecked)
+                    item.setData(Qt.UserRole, rel_path)  # clé = chemin relatif
                     self.file_list.addItem(item)
+                    self.file_name_to_path[rel_path] = abs_path  # clé = chemin relatif
 
-    def populate_file_list_with_paths(self, file_paths):
-        """
-        Populate the file list with the provided file paths.
-        
-        Args:
-            file_paths (list): List of file paths to display in the file list.
-        """
+    def populate_file_list_with_paths(self, file_paths, checked_files=None):
         self.file_list.clear()
-        for file_path in file_paths:
-            item = QListWidgetItem(os.path.basename(file_path))
+        checked_files_set = set([os.path.normpath(f) for f in (checked_files or [])])
+        self.file_name_to_path = {}
+
+        # 1. Trouver la racine du projet
+        def find_nn_project_root(path):
+            path = os.path.abspath(path)
+            while path and os.path.basename(path) != "NN_Project":
+                parent = os.path.dirname(path)
+                if parent == path:
+                    return None
+                path = parent
+            return path
+
+        project_root = find_nn_project_root(self.dataset_path)
+        if not project_root:
+            QMessageBox.critical(self, "Erreur", "Impossible de trouver le dossier NN_Project.")
+            return
+
+        for rel_path in file_paths:
+            # rel_path peut être 'filtered_xxx.h5' ou 'subfolder/filtered_xxx.h5'
+            abs_path = os.path.normpath(os.path.join(project_root, rel_path))
+            filename = os.path.basename(rel_path)
+            item = QListWidgetItem(filename)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Unchecked)
+            item.setData(Qt.UserRole, rel_path)  # On stocke le chemin relatif pour la logique
+            # On check si le chemin relatif est dans checked_files_set
+            item.setCheckState(Qt.Checked if os.path.normpath(rel_path) in checked_files_set else Qt.Unchecked)
             self.file_list.addItem(item)
-    
+            self.file_name_to_path[rel_path] = abs_path  # clé = chemin relatif
+
+    def restore_checkboxes(self):
+        """Restore checkbox states for file list."""
+        selected_files_set = set(self.state.get("selected_files", []))
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            rel_path = item.data(Qt.UserRole)
+            item.setCheckState(Qt.Checked if rel_path in selected_files_set else Qt.Unchecked)
+
+    def get_saved_state(self):
+        """Return the complete current state."""
+        self.state["hyperparameters"] = {
+            "layers": self.get_layer_configs(),
+            "sequence_length": self.sequence_length_input.text(),
+            "stride": self.stride_input.text(),
+            "batch_size": self.batch_size_input.text(),
+            "epoch_number": self.epoch_number_input.text(),
+            "learning_rate": self.learning_rate_combo.currentText()
+        }
+        self.state["optimizer"] = self.optimizer_combo.currentText()
+        if self.classification_loss_combo.currentIndex() >= 0:
+            self.state["loss_function"] = self.classification_loss_combo.currentText()
+        elif self.regression_loss_combo.currentIndex() >= 0:
+            self.state["loss_function"] = self.regression_loss_combo.currentText()
+        else:
+            self.state["loss_function"] = None
+        # Sauvegarde les chemins relatifs cochés
+        self.state["selected_files"] = [
+            self.file_list.item(i).data(Qt.UserRole)
+            for i in range(self.file_list.count())
+            if self.file_list.item(i).checkState() == Qt.Checked
+        ]
+        # Sauvegarde tous les fichiers affichés (pour restauration)
+        self.state["all_files"] = [
+            self.file_list.item(i).data(Qt.UserRole)
+            for i in range(self.file_list.count())
+        ]
+        self.state["training_history"] = getattr(self, "training_history", None)
+        self.state["test_results"] = getattr(self, "test_results", None)
+        self.state["trained_model"] = getattr(self, "trained_model", None)
+        self.state["training_monitor_logs"] = self.training_monitor_text.toPlainText()
+        self.state["training_progress"] = self.training_progress_bar.value()
+        self.state["summary_text"] = self.nn_text_edit.toPlainText()
+        self.state["eval_plot_index"] = self.eval_stack.currentIndex()
+        return self.state
+
     def get_training_parameters(self):
         """Retourne tous les paramètres nécessaires à l'entraînement."""
         if "hyperparameters" not in self.state:
@@ -1488,77 +1612,153 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             "learning_rate": float(hp.get("learning_rate", 0.001))
         }
         selected_files = [
-            self.file_list.item(i).text()
+            self.file_list.item(i).data(Qt.UserRole)
             for i in range(self.file_list.count())
             if self.file_list.item(i).checkState() == Qt.Checked
         ]
         return params, selected_files
-
+    
     def plot_training_curves(self, history):
-        self.eval_stack.setCurrentIndex(1)
+            self.eval_stack.setCurrentIndex(1)
 
-        self.eval_canvas.figure.clf()
-        ax1 = self.eval_canvas.figure.add_subplot(2, 1, 1)
-        ax2 = self.eval_canvas.figure.add_subplot(2, 1, 2)
+            self.eval_canvas.figure.clf()
+            ax1 = self.eval_canvas.figure.add_subplot(2, 1, 1)
+            ax2 = self.eval_canvas.figure.add_subplot(2, 1, 2)
 
-        # Access history through the history attribute
-        history_dict = history.history
+            # Access history through the history attribute
+            history_dict = history.history
 
-        # Loss
-        ax1.plot(history_dict['loss'], label='Train Loss', color='blue')
-        ax1.plot(history_dict['val_loss'], label='Validation Loss', color='orange')
-        ax1.set_title("Training and Validation Loss")
-        ax1.set_xlabel("Epoch")
-        ax1.set_ylabel("Loss")
-        ax1.legend()
-        ax1.grid(True)
+            # Loss
+            ax1.plot(history_dict['loss'], label='Train Loss', color='blue')
+            ax1.plot(history_dict['val_loss'], label='Validation Loss', color='orange')
+            ax1.set_title("Training and Validation Loss")
+            ax1.set_xlabel("Epoch")
+            ax1.set_ylabel("Loss")
+            ax1.legend()
+            ax1.grid(True)
 
-        # Accuracy (handle both 'accuracy' and 'sparse_categorical_accuracy')
-        acc_key = None
-        val_acc_key = None
-        if 'accuracy' in history_dict:
-            acc_key = 'accuracy'
-            val_acc_key = 'val_accuracy'
-        elif 'sparse_categorical_accuracy' in history_dict:
-            acc_key = 'sparse_categorical_accuracy'
-            val_acc_key = 'val_sparse_categorical_accuracy'
+            # Accuracy (handle both 'accuracy' and 'sparse_categorical_accuracy')
+            acc_key = None
+            val_acc_key = None
+            if 'accuracy' in history_dict:
+                acc_key = 'accuracy'
+                val_acc_key = 'val_accuracy'
+            elif 'sparse_categorical_accuracy' in history_dict:
+                acc_key = 'sparse_categorical_accuracy'
+                val_acc_key = 'val_sparse_categorical_accuracy'
 
-        if acc_key and val_acc_key and acc_key in history_dict and val_acc_key in history_dict:
-            ax2.plot(history_dict[acc_key], label='Train Accuracy', color='blue')
-            ax2.plot(history_dict[val_acc_key], label='Validation Accuracy', color='orange')
-            ax2.set_title("Training and Validation Accuracy")
-            ax2.set_xlabel("Epoch")
-            ax2.set_ylabel("Accuracy")
-            ax2.legend()
-            ax2.grid(True)
-        else:
-            ax2.text(0.5, 0.5, "No accuracy metric available in history.",
-                     ha='center', va='center', fontsize=12)
-            ax2.set_axis_off()
+            if acc_key and val_acc_key and acc_key in history_dict and val_acc_key in history_dict:
+                ax2.plot(history_dict[acc_key], label='Train Accuracy', color='blue')
+                ax2.plot(history_dict[val_acc_key], label='Validation Accuracy', color='orange')
+                ax2.set_title("Training and Validation Accuracy")
+                ax2.set_xlabel("Epoch")
+                ax2.set_ylabel("Accuracy")
+                ax2.legend()
+                ax2.grid(True)
+            else:
+                ax2.text(0.5, 0.5, "No accuracy metric available in history.",
+                        ha='center', va='center', fontsize=12)
+                ax2.set_axis_off()
 
-        self.eval_canvas.figure.tight_layout()
-        self.eval_canvas.draw()
+            self.eval_canvas.figure.tight_layout()
+            self.eval_canvas.draw()
 
     def save_model(self):
-        """Enregistre le modèle entraîné + historique + résultats dans un fichier .h5 + .json."""
-
-        model = getattr(self, "trained_model", None)
-        history = getattr(self, "training_history", None)
-        results = getattr(self, "test_results", None)
-
-        if model is None or history is None or results is None:
-            QMessageBox.warning(self, "Nothing to Save", "No trained model found. Please train before saving.")
-            return
-
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Model", "", "H5 Files (*.h5)")
-        if not file_path:
-            return
-
+        """Sauvegarde le modèle et toutes les données dans un fichier .h5"""
         try:
-            save_model_and_results(model, history, results, file_path)
-            QMessageBox.information(self, "Success", "Model and results saved successfully.")
+            import h5py
+            import json
+            import numpy as np
+            import os
+
+            # Vérifier si on a un modèle entraîné
+            if not hasattr(self, "trained_model") or not hasattr(self, "training_history"):
+                QMessageBox.warning(self, "Nothing to Save", "No trained model found. Please train before saving.")
+                return
+
+            save_path = QFileDialog.getSaveFileName(self, "Save Model", "", "H5 Files (*.h5)")[0]
+            if not save_path:
+                return
+
+            if not save_path.endswith('.h5'):
+                save_path += '.h5'
+
+            # Vérifier les permissions d'écriture
+            save_dir = os.path.dirname(save_path)
+            if not os.access(save_dir, os.W_OK):
+                QMessageBox.critical(self, "Error", f"No write permission in directory:\n{save_dir}")
+                return
+
+            with h5py.File(save_path, 'w') as hf:
+                # 1. Sauvegarder la configuration du modèle
+                model_config = self.trained_model.get_config()
+                hf.create_dataset('model_config', data=json.dumps(model_config).encode('utf-8'))
+                
+                # 2. Sauvegarder les poids du modèle
+                weights_group = hf.create_group('model_weights')
+                for layer in self.trained_model.layers:
+                    layer_group = weights_group.create_group(layer.name)
+                    weights = layer.get_weights()
+                    for i, weight in enumerate(weights):
+                        layer_group.create_dataset(f'weight_{i}', data=weight)
+
+                # 3. Sauvegarder les paramètres d'entraînement
+                training_params = {
+                    'optimizer': self.state.get('optimizer', ''),
+                    'loss_function': self.state.get('loss_function', ''),
+                    'hyperparameters': self.state.get('hyperparameters', {})
+                }
+                hf.create_dataset('training_params', data=json.dumps(training_params).encode('utf-8'))
+
+                # 4. Sauvegarder l'historique
+                history_group = hf.create_group('history')
+                for key, value in self.training_history.history.items():
+                    history_group.create_dataset(key, data=np.array(value))
+
+                # 5. Sauvegarder les résultats de test
+                results_group = hf.create_group('test_results')
+                for key, value in self.test_results.items():
+                    if isinstance(value, (list, np.ndarray)):
+                        results_group.create_dataset(key, data=np.array(value))
+                    else:
+                        results_group.create_dataset(f"{key}_json", 
+                                                  data=json.dumps(value).encode('utf-8'))
+
+                # 6. Sauvegarder la liste des fichiers
+                files_group = hf.create_group('files')
+                selected_files = []
+                checked_files = []
+                # ➤ Trouver la racine NN_Project
+                project_root = self.find_project_root()
+                for i in range(self.file_list.count()):
+                    item = self.file_list.item(i)
+                    abs_path = os.path.abspath(os.path.join(self.dataset_path, item.text()))
+                    # ➤ Chemin relatif à NN_Project
+                    rel_path = os.path.relpath(abs_path, project_root)
+                    selected_files.append(rel_path)
+                    if item.checkState() == Qt.Checked:
+                        checked_files.append(rel_path)
+                files_group.create_dataset('selected_files', data=[str(f).encode('utf-8') for f in selected_files])
+                files_group.create_dataset('checked_files', data=[str(f).encode('utf-8') for f in checked_files])
+
+            QMessageBox.information(self, "Success", 
+                                  f"Model and all related data saved successfully to:\n{save_path}")
+
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save model:\n{str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to save model and data:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def find_project_root(self):
+        """Trouve le dossier NN_Project à partir du chemin courant."""
+        path = os.path.abspath(self.dataset_path)
+        while path and os.path.basename(path) != "NN_Project":
+            parent = os.path.dirname(path)
+            if parent == path:  # On est à la racine
+                print("NN_Project folder not found in path hierarchy!")
+                return None
+            path = parent
+        return path
 
     def cleanup_training_thread(self):
         """HARRY: Enhanced cleanup with comprehensive state management and error handling"""
@@ -1577,14 +1777,14 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                         self.train_thread.terminate()
                         self.train_thread.wait(1000)  # Short wait after force
                 
-                    # Cleanup Qt object
-                    self.train_thread.deleteLater()
-                    self.train_thread = None
-                    
-                    # Reset state flags
-                    self.is_training = False
-                    if not self.training_completed:
-                        self.training_stopped = True
+                # Cleanup Qt object
+                self.train_thread.deleteLater()
+                self.train_thread = None
+                
+                # Reset state flags
+                self.is_training = False
+                if not self.training_completed:
+                    self.training_stopped = True
                         
             except Exception as e:
                 print(f"Error during thread cleanup: {e}")
@@ -1609,16 +1809,27 @@ class NeuralNetworkDesignerWindow(QMainWindow):
 
     def restore_checkboxes(self):
         """Restore checkbox states for file list."""
-        selected_files_set = set(self.state.get("selected_files", []))
+        checked_files_set = set(self.state.get("selected_files", []))
         for i in range(self.file_list.count()):
             item = self.file_list.item(i)
-            item.setCheckState(Qt.Checked if item.text() in selected_files_set else Qt.Unchecked)
-
+            rel_path = item.data(Qt.UserRole)
+            item.setCheckState(Qt.Checked if rel_path in checked_files_set else Qt.Unchecked)
     def set_tabs_enabled(self, enabled: bool):
         if hasattr(self, "header"):
             for tab in self.header.tabs.values():
                 tab_label = tab.layout().itemAt(0).widget()
                 tab_label.setEnabled(enabled)
+
+    def preserve_state_on_navigation(self):
+        """Préserve l'état actuel lors de la navigation."""
+        current_state = self.get_saved_state()
+        current_state.update({
+            "current_page_index": self.stacked_widget.currentIndex(),
+            "eval_plot_state": self.eval_stack.currentIndex(),
+            "training_log": self.training_monitor_text.toPlainText(),
+            "progress_value": self.training_progress_bar.value()
+        })
+        return current_state
 
     def cleanup_training_thread(self):
         """
@@ -1633,24 +1844,27 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                 # Force quit if still running
                 if self.train_thread.isRunning():
                     self.train_thread.quit()
-                    
+                
                 # Wait with timeout
                 if not self.train_thread.wait(3000):  # 3 second timeout
                     print("Warning: Training thread did not stop properly")
-                    
+                
                 # Ensure thread is finished
                 self.train_thread.terminate()
                 self.train_thread = None
             except Exception as e:
                 print(f"Error during thread cleanup: {e}")
 
-    def closeEvent(self, event):
-        """
-        HARRY: Enhanced close event handler
-        Ensures cleanup happens before window closes
-        """
-        # Clean up training thread
-        self.cleanup_training_thread()
-        
-        # Accept the close event
-        event.accept()
+def get_project_root():
+    # Cherche le dossier NN_Project à partir du fichier courant
+    path = os.path.abspath(__file__)
+    while path and os.path.basename(path) != "NN_Project":
+        path = os.path.dirname(path)
+    return path
+
+def get_absolute_paths(rel_paths):
+    project_root = get_project_root()
+    return [os.path.join(project_root, rel_path) for rel_path in rel_paths]
+
+
+

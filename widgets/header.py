@@ -165,7 +165,6 @@ class Header(QWidget):
                 from windows.nn_evaluator_window import NeuralNetworkEvaluator
                 self.parent_window.nn_evaluator_window = NeuralNetworkEvaluator(saved_state=saved_state)
                 self.parent_window.nn_evaluator_window.parent_window = self.parent_window
-
             new_window = self.parent_window.nn_evaluator_window
         else:
             QMessageBox.warning(self, "Error", f"Unsupported tab: {tab_name}")

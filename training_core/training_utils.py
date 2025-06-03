@@ -619,7 +619,8 @@ def train_model(X_train, X_val, X_test, y_train, y_val, y_test,
 
 # === UTILS FOR SAVING/LOADING MODELS ===
 
-def save_model_and_results(model, history, test_results, file_path):
+def save_model_and_results(model, history, test_results, file_path, selected_files=None, checked_files=None):
+    import h5py
     import json
     import numpy as np
     if not file_path.endswith(".h5"):
@@ -636,6 +637,21 @@ def save_model_and_results(model, history, test_results, file_path):
         json.dump(history, f, default=make_json_serializable, indent=2)
     with open(base + "_results.json", "w") as f:
         json.dump(test_results, f, default=make_json_serializable, indent=2)
+    with h5py.File(file_path, 'w') as hf:
+        # Sauvegarde du modèle, des poids, etc...
+        # Sauvegarde des fichiers utilisés (seulement le nom, pas le chemin complet)
+        files_group = hf.create_group('files')
+        if selected_files is not None:
+            files_group.create_dataset(
+                'selected_files',
+                data=np.array([os.path.basename(f) for f in selected_files], dtype='S')
+            )
+        if checked_files is not None:
+            files_group.create_dataset(
+                'checked_files',
+                data=np.array([os.path.basename(f) for f in checked_files], dtype='S')
+            )
+        # ...reste du code...
 
 def load_model_and_results(file_path):
     import json

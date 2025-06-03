@@ -156,21 +156,37 @@ class StartWindow(QMainWindow):
             self.save_recent_folders()
             self.update_recent_folders_list()
 
+    def find_nn_project_root(self, path):
+        while path and os.path.basename(path) != "NN_Project":
+            parent = os.path.dirname(path)
+            if parent == path:
+                return None
+            path = parent
+        return path
+
     def open_neural_network_designer(self, folder_path):
         """
         Open the NeuralNetworkDesignerWindow with the given dataset folder.
         """
         self.hide()  
-        progress_state.dataset_built = True 
+        progress_state.dataset_built = True
+
+        # ➤ Liste des chemins relatifs complets
+        project_root = self.find_nn_project_root(folder_path)
+        all_files = [
+            os.path.relpath(os.path.join(folder_path, f), project_root)
+            for f in os.listdir(folder_path) if f.endswith('.h5')
+        ]
+        saved_state = {
+            "dataset_path": folder_path,
+            "all_files": all_files,
+            "selected_files": []
+        }
         self.nn_designer_window = NeuralNetworkDesignerWindow(
             dataset_path=folder_path,
-            saved_state={
-                "dataset_path": folder_path,
-                "selected_folder": folder_path,  
-                "filtered_files": [f for f in os.listdir(folder_path) if f.endswith('.h5')]  
-            }
+            saved_state=saved_state
         )
-        self.nn_designer_window.populate_file_list()  
+        self.nn_designer_window.populate_file_list_with_paths(all_files, all_files)
         self.nn_designer_window.showMaximized()
 
     def load_recent_folders(self):
@@ -219,25 +235,218 @@ class StartWindow(QMainWindow):
         self.update_recent_folders_list()
 
     def load_existing_model(self):
-        """Load a previously trained model and open it in the NN Evaluator window."""
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File", "", "H5 Files (*.h5)")
-        if not file_path:
-            return
-
+        """Charge un modèle existant depuis un fichier .h5"""
         try:
-            self.set_tabs_enabled(False)  # Disable tabs during model loading
-            model = load_model(file_path)
-            progress_state.nn_designed = True
-            self.nn_evaluator_window = NeuralNetworkEvaluator()
-            self.nn_evaluator_window.model = model
-            self.nn_evaluator_window.showMaximized()
-            self.hide()
-            self.set_tabs_enabled(True)  # Re-enable tabs after model loading
+            file_path = QFileDialog.getOpenFileName(self, "Load Model", "", "H5 Files (*.h5)")[0]
+            if not file_path:
+                return
+
+            import h5py
+            import json
+            import numpy as np
+            import tensorflow as tf
+            from tensorflow.keras.models import Sequential
+            from tensorflow.keras.layers import LSTM, Dense, Dropout, InputLayer
+            import os  # <-- Assure l'import ici
+
+            with h5py.File(file_path, 'r') as hf:
+                # 1. Recréer le modèle manuellement depuis la config
+                config = json.loads(hf['model_config'][()].decode('utf-8'))
+
+                # Créer un modèle séquentiel
+                model = Sequential()
+
+                # Parcourir les couches dans la config
+                for layer_config in config['layers']:
+                    if layer_config['class_name'] == 'InputLayer':
+                        input_shape = layer_config['config']['batch_input_shape'][1:]
+                        model.add(InputLayer(input_shape=input_shape))
+
+                    elif layer_config['class_name'] == 'LSTM':
+                        lstm_config = layer_config['config']
+                        model.add(LSTM(
+                            units=lstm_config['units'],
+                            activation=lstm_config['activation'],
+                            return_sequences=lstm_config['return_sequences'],
+                            dropout=lstm_config['dropout'],
+                            recurrent_dropout=lstm_config['recurrent_dropout']
+                        ))
+
+                    elif layer_config['class_name'] == 'Dense':
+                        dense_config = layer_config['config']
+                        model.add(Dense(
+                            units=dense_config['units'],
+                            activation=dense_config['activation']
+                        ))
+
+                    elif layer_config['class_name'] == 'Dropout':
+                        dropout_config = layer_config['config']
+                        model.add(Dropout(rate=dropout_config['rate']))
+
+                # 2. Restaurer les poids
+                weights_group = hf['model_weights']
+                for layer in model.layers:
+                    if layer.name in weights_group:
+                        layer_weights = []
+                        layer_group = weights_group[layer.name]
+                        weight_names = sorted([k for k in layer_group.keys()])
+                        for name in weight_names:
+                            weight = layer_group[name][:]
+                            layer_weights.append(weight)
+                        if layer_weights:
+                            layer.set_weights(layer_weights)
+
+                # 3. Charger les paramètres
+                training_params = json.loads(hf['training_params'][()].decode('utf-8'))
+
+                # 4. Charger l'historique et le formater pour correspondre à keras.callbacks.History
+                class HistoryWrapper:
+                    def __init__(self, history_dict):
+                        self.history = history_dict
+
+                history_data = {}
+                for key in hf['history'].keys():
+                    history_data[key] = hf['history'][key][:]
+                history = HistoryWrapper(history_data)
+
+                # 5. Charger les résultats
+                test_results = {}
+                for key in hf['test_results'].keys():
+                    if key.endswith('_json'):
+                        base_key = key[:-5]
+                        test_results[base_key] = json.loads(hf[f'test_results/{key}'][()].decode('utf-8'))
+                    else:
+                        test_results[key] = hf[f'test_results/{key}'][:]
+
+                # 6. Mettre à jour progress_state
+                import windows.progress_state as progress_state
+                progress_state.trained_model = model
+                progress_state.training_history = history.history
+                progress_state.test_results = test_results
+                progress_state.dataset_built = True
+                progress_state.nn_designed = True
+                progress_state.training_started = True
+
+                # 7. Restaurer la liste des fichiers
+                try:
+                    files_group = hf['files']
+                    selected_files = []
+                    if 'selected_files' in files_group:
+                        selected_files_dataset = files_group['selected_files']
+                        if isinstance(selected_files_dataset, h5py.Dataset):
+                            selected_files_data = selected_files_dataset[()]
+                            if isinstance(selected_files_data, np.ndarray):
+                                selected_files = [
+                                    f.decode('utf-8') if isinstance(f, bytes) else str(f)
+                                    for f in selected_files_data
+                                ]
+                            else:
+                                print("Warning: selected_files_data is not a numpy array")
+                        else:
+                            print("Warning: selected_files is not an h5py dataset")
+
+                    checked_files = []
+                    if 'checked_files' in files_group:
+                        checked_files_dataset = files_group['checked_files']
+                        if isinstance(checked_files_dataset, h5py.Dataset):
+                            checked_files_data = checked_files_dataset[()]
+                            if isinstance(checked_files_data, np.ndarray):
+                                checked_files = [
+                                    f.decode('utf-8') if isinstance(f, bytes) else str(f)
+                                    for f in checked_files_data
+                                ]
+                            else:
+                                print("Warning: checked_files_data is not a numpy array")
+                        else:
+                            print("Warning: checked_files is not an h5py dataset")
+
+                    print(f"Debug - Selected files: {len(selected_files)}, Checked files: {len(checked_files)}")
+
+                except Exception as e:
+                    print(f"Error loading files: {e}")
+                    selected_files = []
+                    checked_files = []
+
+                # 8. Trouver le dossier NN_Project à partir du chemin du modèle
+                def find_nn_project_root(start_path):
+                    path = os.path.abspath(start_path)
+                    while path and os.path.basename(path) != "NN_Project":
+                        parent = os.path.dirname(path)
+                        if parent == path:
+                            return None
+                        path = parent
+                    return path
+
+                PROJECT_ROOT = find_nn_project_root(file_path)
+                if PROJECT_ROOT is None:
+                    QMessageBox.critical(self, "Erreur", "Impossible de trouver le dossier NN_Project à partir du modèle chargé.")
+                    return
+
+                saved_state = {
+                    "hyperparameters": training_params.get("hyperparameters", {}),
+                    "optimizer": training_params.get("optimizer", ""),
+                    "loss_function": training_params.get("loss_function", ""),
+                    "training_history": history,
+                    "test_results": test_results,
+                    "trained_model": model,
+                    "selected_files": checked_files  # Pour la logique interne
+                }
+
+                print("Debug - About to create NeuralNetworkDesignerWindow")
+                nn_designer = NeuralNetworkDesignerWindow(dataset_path=PROJECT_ROOT, saved_state=saved_state)
+                print("Debug - NeuralNetworkDesignerWindow created")
+
+                checked_file_names = [os.path.basename(f) for f in checked_files]
+                nn_designer.populate_file_list_with_paths(selected_files, checked_files)
+                print("Debug - populate_file_list_with_paths done")
+
+                # 10. Créer et configurer l'évaluateur
+                from windows.nn_evaluator_window import NeuralNetworkEvaluator
+                nn_evaluator = NeuralNetworkEvaluator(saved_state={
+                    "model": model,
+                    "test_results": test_results
+                })
+
+                # 11. Connecter les fenêtres et régénérer les plots
+                nn_designer.nn_evaluator_window = nn_evaluator
+                nn_evaluator.parent_window = nn_designer
+
+                nn_designer.plot_training_curves(history)
+
+                if test_results:
+                    true_labels = test_results.get('y_true', [])
+                    predicted_labels = test_results.get('y_pred', [])
+                    if len(true_labels) > 0 and len(predicted_labels) > 0:
+                        from matplotlib.figure import Figure
+                        pred_fig = Figure(figsize=(8, 6))
+                        scatter_fig = Figure(figsize=(8, 6))
+                        nn_evaluator.plot_prediction_vs_ground_truth(
+                            fig=pred_fig,
+                            ground_truth=true_labels,
+                            predicted=predicted_labels
+                        )
+                        nn_evaluator.prediction_scatter_plot_canvas(scatter_fig)
+                        nn_evaluator.plot_confusion_matrix(true_labels, predicted_labels)
+
+                # 12. Afficher NN Designer
+                self.hide()
+                nn_designer.showMaximized()
+                QMessageBox.information(self, "Success", "Model and all related data loaded successfully!")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load model:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def find_project_root_from_file(self, file_path):
+        """Trouve le dossier NN_Project à partir du chemin du fichier modèle."""
+        path = os.path.abspath(file_path)
+        while path and os.path.basename(path) != "NN_Project":
+            path = os.path.dirname(path)
+        return path
 
     def set_tabs_enabled(self, enabled: bool):
-        """Enable or disable tabs in the header."""
-        if hasattr(self, "header"):
-            self.header.set_tabs_enabled(enabled)
+        """Active ou désactive tous les onglets du header."""
+        if hasattr(self, "header") and self.header is not None:
+            for tab in self.header.tabs.values():
+                tab.setEnabled(enabled)
 

@@ -1,0 +1,36 @@
+Dataset Creation Date: 2025-06-01 19:53:47
+
+Selected Inputs:
+- emgR2
+- emgL3
+- imu2
+- imu3
+
+Selected Outputs:
+- button_ok
+
+Filtered Files:
+- filtered_cropped_20250520_214656.h5
+- filtered_cropped_20250520_220846.h5
+- filtered_cropped_20250520_221549.h5
+- filtered_cropped_20250520_223010.h5
+- filtered_cropped_20250520_223713.h5
+- filtered_cropped_20250520_224458.h5
+- filtered_cropped_20250520_225821.h5
+- filtered_cropped_20250520_230549.h5
+- filtered_cropped_20250520_231515.h5
+- filtered_cropped_20250520_232546.h5
+- filtered_cropped_20250520_233139.h5
+- filtered_cropped_20250520_233738.h5
+- filtered_sensor_20250520_214656.h5
+- filtered_sensor_20250520_220846.h5
+- filtered_sensor_20250520_221549.h5
+- filtered_sensor_20250520_223010.h5
+- filtered_sensor_20250520_223713.h5
+- filtered_sensor_20250520_224458.h5
+- filtered_sensor_20250520_225821.h5
+- filtered_sensor_20250520_230549.h5
+- filtered_sensor_20250520_231515.h5
+- filtered_sensor_20250520_232546.h5
+- filtered_sensor_20250520_233139.h5
+- filtered_sensor_20250520_233738.h5

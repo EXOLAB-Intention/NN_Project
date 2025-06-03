@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QTextCursor, QIntValidator, QFont
-from windows.nn_designer_window import NeuralNetworkDesignerWindow
+ 
 import re
 import time
 from widgets.header import Header
@@ -125,15 +125,33 @@ class DatasetBuilderWindow(QMainWindow):
         main_layout.addWidget(content_container)
         
     def apply_filters_to_raw_data(self):
-        """
-        Appliquer des filtres aux données brutes pour réduire les biais et améliorer leur qualité.
-        """
-        from functions import process_emg_signal  # Importer la fonction de traitement des signaux EM
+        from functions import process_emg_signal
+        import h5py
+        import numpy as np
+
         filtered_data = []
         for file in self.state["all_files"]:
-            # Exemple d'appel à une méthode de filtrage spécifique
-            processed_data = process_emg_signal(file)
-            filtered_data.append(processed_data)
+            # Chemin absolu du fichier
+            if "selected_folder" in self.state and self.state["selected_folder"]:
+                file_path = os.path.join(self.state["selected_folder"], file)
+            else:
+                file_path = file  # fallback
+
+            # Ouvre le fichier et traite chaque trial
+            try:
+                with h5py.File(file_path, 'r') as h5f:
+                    for trial in h5f.keys():
+                        trial_group = h5f[trial]
+                        # Exemple : traiter emgL1 si présent
+                        if "emgL1" in trial_group:
+                            emg = np.array(trial_group["emgL1"])
+                            print("Shape du signal EMG:", emg.shape)
+                            print("Premiers éléments:", emg[:10])
+                            processed = process_emg_signal(emg)
+                            filtered_data.append(processed)
+            except Exception as e:
+                print(f"Erreur lors du traitement de {file_path} : {e}")
+
         self.state["filtered_files"] = filtered_data
 
 
@@ -649,7 +667,21 @@ class DatasetBuilderWindow(QMainWindow):
                             trial_group = filtered_h5.create_group(trial)
                             for dataset, data in trial_data.items():
                                 trial_group.create_dataset(dataset, data=data)
-                    filtered_files.append(f"filtered_{file_name}")
+                    # Ajoute le chemin relatif à NN_Project
+                    project_root = None
+                    path = os.path.abspath(dataset_folder)
+                    while path and os.path.basename(path) != "NN_Project":
+                        parent = os.path.dirname(path)
+                        if parent == path:
+                            break
+                        path = parent
+                    if os.path.basename(path) == "NN_Project":
+                        project_root = path
+                    if project_root:
+                        rel_path = os.path.relpath(filtered_file_path, project_root)
+                    else:
+                        rel_path = f"filtered_{file_name}"
+                    filtered_files.append(rel_path)
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Error processing file {file_name}: {e}")
                 continue
@@ -677,10 +709,11 @@ class DatasetBuilderWindow(QMainWindow):
             saved_state.update({
                 "filtered_files": filtered_files,
                 "dataset_path": dataset_folder,
-                "selected_files": []  # Start with no files selected
+                "selected_files": [] # Tous cochés par défaut
             })
-            
+            saved_state["all_files"] = filtered_files[:]
             progress_state.dataset_built = True
+            from windows.nn_designer_window import NeuralNetworkDesignerWindow
             self.nn_designer = NeuralNetworkDesignerWindow(
                 dataset_path=dataset_folder,
                 saved_state=saved_state
@@ -699,7 +732,8 @@ class DatasetBuilderWindow(QMainWindow):
             dataset_folder (str): Path to the dataset folder.
         """
         # Get the current state of the Dataset Builder
-        saved_state = self.get_saved_state()  
+        saved_state = self.get_saved_state() 
+        from windows.nn_designer_window import NeuralNetworkDesignerWindow 
         self.nn_designer_window = NeuralNetworkDesignerWindow(
             dataset_path=dataset_folder,
             saved_state=saved_state
@@ -768,10 +802,14 @@ class DatasetBuilderWindow(QMainWindow):
         self.next_button.setEnabled(self.state["current_page"] < total_pages - 1)
 
     def show_page(self):
-        """Display the current page of files in the list widget."""
+        """Affiche les fichiers d'origine (pas les filtrés) dans la liste de gauche."""
         self.file_list.clear()
-        self.file_list.addItems(self.state["all_files"])  
-        self.update_pagination_buttons()
+        files = self.state["all_files"]  # <-- Toujours les fichiers d'origine
+        start = self.state["current_page"] * self.items_per_page
+        end = start + self.items_per_page
+        for i, file in enumerate(files[start:end]):
+            item = QListWidgetItem(file if isinstance(file, str) else str(file))
+            self.file_list.addItem(item)
 
     def show_previous_page(self):
         """Navigate to the previous page of files."""
