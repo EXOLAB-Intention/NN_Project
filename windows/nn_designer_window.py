@@ -100,7 +100,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             "hyperparameters": None,
             "selected_files": [],
             "dataset_path": dataset_path,
-            "summary_text": "No hyperparameters saved",
+            "summary_text": "No parameters saved",
             "training_monitor_logs": "",
             "training_progress": 0,
             "eval_plot_index": 0,
@@ -475,7 +475,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         layer_types = [layer["type"] for layer in layer_configs] if layer_configs else []
         
         summary = (
-            f"Hyperparameters saved:\n"
+            f"Parameters saved:\n"
             f"• Optimizer: {optimizer}\n"
             f"• Loss Function: {loss_function}\n"
             f"• Layer Types: {', '.join(layer_types) if layer_types else 'None'}\n"
@@ -550,7 +550,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         # Mark as saved and update display
         self.hyperparams_saved = True
         self.update_summary_display()
-        QMessageBox.information(self, "Hyperparameters Saved", "The hyperparameters have been saved successfully.")
+        QMessageBox.information(self, "Parameters Saved", "The parameters have been saved successfully.")
 
     def init_ui(self):
         """Initialize all UI components of the window."""
@@ -968,7 +968,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         middle_layout.addWidget(layer_box)
 
         # Save button
-        save_btn = QPushButton("Save Hyperparameters")
+        save_btn = QPushButton("Save Parameters")
         save_btn.setStyleSheet("""
             QPushButton {
                 background-color: #dceaf7;

@@ -698,8 +698,6 @@ class TrainingThread(QThread):
             # HARRY: Check stop flag before starting
             if self._stop_flag:
                 return
-
-            # ...existing training code...
             
             # HARRY: Periodically check stop flag during training
             if self._stop_flag:
