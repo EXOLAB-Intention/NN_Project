@@ -80,12 +80,19 @@ class TrainingThread(QThread):
 class NeuralNetworkDesignerWindow(QMainWindow):
     def __init__(self, dataset_path=None, saved_state=None):
         super().__init__()
+        if dataset_path is None:
+            QMessageBox.critical(self, "Error", "dataset_path is None! Impossible d'ouvrir le designer sans dataset.")
+            raise ValueError("dataset_path is None")
+        self.dataset_path = dataset_path
+        self.saved_state = saved_state
         # HARRY: Initialize header attribute first
         self.header = None
         self.dataset_path = dataset_path
         self.is_training = False
-        self.training_completed = False
         self.training_stopped = False
+        self.loaded_params = None  # Paramètres du modèle chargé
+        self.loaded_files = None
+        
         
         # HARRY: Register this window
         QApplication.instance().register_window(self)
@@ -130,8 +137,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
 
         # HARRY: Add training state flag
         self.is_training = False
-        # HARRY: Add completion flag
-        self.training_completed = False
+        # HARRY: Add completion flag*
 
     def restore_state(self):
         """Restore all UI elements from self.state."""
@@ -186,6 +192,10 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         self.trained_model = self.state.get("trained_model", None)
         self.training_history = self.state.get("training_history", None)
         self.test_results = self.state.get("test_results", None)
+        self.training_completed = self.state.get("training_completed", False)
+        self.training_stopped = self.state.get("training_stopped", False)
+        if self.training_completed:
+            self.training_stopped = False
 
 
     def clear_layer_combos(self):
@@ -460,6 +470,8 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         self.state["summary_text"] = self.nn_text_edit.toPlainText()
         self.state["eval_plot_index"] = self.eval_stack.currentIndex()
         self.state["training_started"] = progress_state.training_started
+        self.state["training_completed"] = getattr(self, "training_completed", False)
+        self.state["training_stopped"] = getattr(self, "training_stopped", False)
         return self.state
 
     def update_summary_display(self):
@@ -509,6 +521,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             for i in range(self.file_list.count())
             if self.file_list.item(i).checkState() == Qt.Checked
         ]
+
         return params, selected_files
 
     def save_hyperparameters(self):
@@ -1332,11 +1345,25 @@ class NeuralNetworkDesignerWindow(QMainWindow):
     def on_training_finished(self, model, history, test_results):
         """HARRY: Enhanced training completion handler with robust error handling and safe header management"""
         try:
+            # Handle stopped training case first
+            if self.training_stopped:
+                self.training_progress_bar.setValue(0)
+                self.nn_text_edit.setText("🛑 Training was manually stopped.")
+                progress_state.nn_designed = False
+                self.eval_stack.setCurrentIndex(0)  # Return to placeholder
+                # Reset states
+                self.is_training = False
+                self.training_completed = False
+                return  # Return immediately if training was stopped
             # Safely store results first
+            self.last_training_params, self.last_training_files = self.get_training_parameters()
             self.trained_model = model
             self.training_history = history
             self.test_results = test_results
             self.training_completed = True
+            self.training_stopped = False  # <-- AJOUTE CETTE LIGNE
+            self.state["training_completed"] = True
+            self.state["training_stopped"] = False
             
             # Then update flags and UI
             self.is_training = False
@@ -1353,13 +1380,6 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                     print(f"Thread cleanup error: {thread_e}")
                 finally:
                     self.train_thread = None
-
-            # Handle stopped training case
-            if self.training_stopped:
-                self.nn_text_edit.setText("🛑 Training was manually stopped.")
-                progress_state.nn_designed = False
-                self.eval_stack.setCurrentIndex(0)
-                return
 
             # Update UI with results
             try:
@@ -1558,67 +1578,6 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             item = self.file_list.item(i)
             rel_path = item.data(Qt.UserRole)
             item.setCheckState(Qt.Checked if rel_path in selected_files_set else Qt.Unchecked)
-
-    def get_saved_state(self):
-        """Return the complete current state."""
-        self.state["hyperparameters"] = {
-            "layers": self.get_layer_configs(),
-            "sequence_length": self.sequence_length_input.text(),
-            "stride": self.stride_input.text(),
-            "batch_size": self.batch_size_input.text(),
-            "epoch_number": self.epoch_number_input.text(),
-            "learning_rate": self.learning_rate_combo.currentText()
-        }
-        self.state["optimizer"] = self.optimizer_combo.currentText()
-        if self.classification_loss_combo.currentIndex() >= 0:
-            self.state["loss_function"] = self.classification_loss_combo.currentText()
-        elif self.regression_loss_combo.currentIndex() >= 0:
-            self.state["loss_function"] = self.regression_loss_combo.currentText()
-        else:
-            self.state["loss_function"] = None
-        # Sauvegarde les chemins relatifs cochés
-        self.state["selected_files"] = [
-            self.file_list.item(i).data(Qt.UserRole)
-            for i in range(self.file_list.count())
-            if self.file_list.item(i).checkState() == Qt.Checked
-        ]
-        # Sauvegarde tous les fichiers affichés (pour restauration)
-        self.state["all_files"] = [
-            self.file_list.item(i).data(Qt.UserRole)
-            for i in range(self.file_list.count())
-        ]
-        self.state["training_history"] = getattr(self, "training_history", None)
-        self.state["test_results"] = getattr(self, "test_results", None)
-        self.state["trained_model"] = getattr(self, "trained_model", None)
-        self.state["training_monitor_logs"] = self.training_monitor_text.toPlainText()
-        self.state["training_progress"] = self.training_progress_bar.value()
-        self.state["summary_text"] = self.nn_text_edit.toPlainText()
-        self.state["eval_plot_index"] = self.eval_stack.currentIndex()
-        return self.state
-
-    def get_training_parameters(self):
-        """Retourne tous les paramètres nécessaires à l'entraînement."""
-        if "hyperparameters" not in self.state:
-            QMessageBox.warning(self, "Missing Hyperparameters", "Please save your hyperparameters before starting training.")
-            return None, None
-        hp = self.state["hyperparameters"]
-        params = {
-            "optimizer": self.state["optimizer"],
-            "loss_function": self.state["loss_function"],
-            "loss_type": "Classification" if self.classification_loss_combo.currentIndex() >= 0 else "Regression",
-            "layers": hp.get("layers", []),
-            "sequence_length": int(hp.get("sequence_length", 50)),
-            "stride": int(hp.get("stride", 5)),
-            "batch_size": int(hp.get("batch_size", 32)),
-            "epochs": int(hp.get("epoch_number", 50)),
-            "learning_rate": float(hp.get("learning_rate", 0.001))
-        }
-        selected_files = [
-            self.file_list.item(i).data(Qt.UserRole)
-            for i in range(self.file_list.count())
-            if self.file_list.item(i).checkState() == Qt.Checked
-        ]
-        return params, selected_files
     
     def plot_training_curves(self, history):
             self.eval_stack.setCurrentIndex(1)
@@ -1672,11 +1631,51 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             import json
             import numpy as np
             import os
-
+            print("trained_model:", self.trained_model)
+            print("training_history:", self.training_history)
+            print("training_completed:", self.training_completed)
             # Vérifier si on a un modèle entraîné
-            if not hasattr(self, "trained_model") or not hasattr(self, "training_history"):
-                QMessageBox.warning(self, "Nothing to Save", "No trained model found. Please train before saving.")
+            if (
+                not hasattr(self, "trained_model") or self.trained_model is None
+                or not hasattr(self, "training_history") or self.training_history is None
+                or not getattr(self, "training_completed", False)
+            ):
+                QMessageBox.warning(self, "Nothing to Save", "No trained model found or training not completed. Please train before saving.")
                 return
+                    
+            # Obtenir les paramètres actuels
+            current_params, current_files = self.get_training_parameters()
+            
+            if hasattr(self, 'last_training_params'):  # Si on a entraîné
+                reference_params = self.last_training_params
+                reference_files = self.last_training_files
+            elif hasattr(self, 'loaded_params'):  # Si on a chargé un modèle
+                reference_params = self.loaded_params
+                reference_files = self.loaded_files
+
+            if reference_params and reference_files:
+                params_changed = current_params != reference_params
+                files_changed = set(current_files) != set(reference_files)
+            
+                if params_changed or files_changed:
+                    reply = QMessageBox.warning(
+                        self,
+                        "Parameters Modified",
+                        "The current parameters or file selection differ from those used for training.\n"
+                        "The saved model will not reflect these changes.\n\n"
+                        "Do you want to:\n"
+                        "• Save anyway (with old parameters)\n"
+                        "• Train new model first",
+                        QMessageBox.Save | QMessageBox.Cancel | QMessageBox.Retry,
+                        QMessageBox.Retry
+                    )
+                    
+                    if reply == QMessageBox.Retry:
+                        self.start_training()
+                        return
+                    elif reply == QMessageBox.Cancel:
+                        return
+                    # Si Save, continuer avec la sauvegarde
 
             save_path = QFileDialog.getSaveFileName(self, "Save Model", "", "H5 Files (*.h5)")[0]
             if not save_path:

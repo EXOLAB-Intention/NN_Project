@@ -1,5 +1,7 @@
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QVBoxLayout, QGridLayout, QLabel, QWidget, QSpacerItem, QSizePolicy, QFileDialog, QPushButton, QHBoxLayout, QStackedWidget, QComboBox
+    QApplication, QMainWindow, QVBoxLayout, QGridLayout, QLabel, QWidget, 
+    QSpacerItem, QSizePolicy, QFileDialog, QPushButton, QHBoxLayout, 
+    QStackedWidget, QComboBox,QMessageBox,QDialog, QTextBrowser,QMenu
 )
 from PyQt5.QtCore import QSize
 import os
@@ -597,119 +599,255 @@ class NeuralNetworkEvaluator(QMainWindow):
 
 
     def add_compare_models_page(self):
-        """
-        Add the Compare Models page to the stacked widget.
-        This page allows users to compare different trained models.
-        """
+        """Add the Compare Models page with dropdown model selection"""
         page = QWidget()
         layout = QVBoxLayout()
-
         comparison_layout = QHBoxLayout()
         
-        # Model A
-        model_a_layout = QVBoxLayout()
-        model_a_label = QLabel("<b><i>Model A</b></i>")
-        model_a_layout.addWidget(model_a_label, alignment=Qt.AlignCenter)
+        # Initialize model manager if not exists
+        if not hasattr(self, 'model_manager'):
+            from utils.model_manager import ModelManager
+            self.model_manager = ModelManager()
+
+        # Add current model if exists
+        if hasattr(self, 'test_results') and self.test_results:
+            self.model_manager.add_current_model({
+                'y_true': self.test_results.get('y_true', []),
+                'y_pred': self.test_results.get('y_pred', []),
+                'accuracy': self.test_results.get('accuracy', 0.0)
+            })
+
+        def create_model_section(side: str):
+            section = QWidget()
+            layout = QVBoxLayout()
+
+            # Model selection button
+            model_select_btn = QPushButton(f"Select Model {side}")
+            model_select_btn.setStyleSheet("""
+                QPushButton {
+                    border: 1px solid #dcdcdc;
+                    border-radius: 5px;
+                    padding: 5px 30px 5px 10px;
+                    background-color: white;
+                    font-size: 14px;
+                    color: #333;
+                    text-align: left;
+                    min-width: 200px;
+                }
+                QPushButton:hover {
+                    border: 1px solid #87ceeb;
+                    background-color: #f8f8f8;
+                }
+                QPushButton::menu-indicator {
+                    subcontrol-origin: padding;
+                    subcontrol-position: top right;
+                    image: url(assets/arrow_down.png);
+                    min-width: 20px;
+                    min-height: 20px;
+                    border: none;
+                    right: 5px;
+                }
+            """)
+
+            # Create menu and store actions dictionary
+            model_menu = QMenu()
+            model_actions = {}
+            
+            def update_menus():
+                """Update both menus with current models"""
+                model_menu.clear()
+                # Store load_action in the outer scope
+                nonlocal load_action  
+                load_action = model_menu.addAction("Load Model...")
+                model_menu.addSeparator()
+                
+                model_names = self.model_manager.get_model_names()
+                if not model_names:
+                    no_models = model_menu.addAction("No models found")
+                    no_models.setEnabled(False)
+                else:
+                    for name in model_names:
+                        action = model_menu.addAction(name)
+                        model_actions[action] = name
+
+            def on_menu_triggered(action):
+                if action.text() == "Load Model...":
+                    file_path, _ = QFileDialog.getOpenFileName(
+                        self, "Load Model", "", "H5 Files (*.h5)"
+                    )
+                    if file_path and os.path.exists(file_path):
+                        if model_name := self.model_manager.load_model(file_path):
+                            model_select_btn.setText(model_name)
+                            update_display(model_name)
+                            update_menus()  # Update both menus
+                elif action.text() != "No models found":
+                    model_name = action.text()
+                    model_select_btn.setText(model_name)
+                    update_display(model_name)
+
+            # Connect menu trigger
+            model_menu.triggered.connect(on_menu_triggered)
+            model_select_btn.setMenu(model_menu)
+
+            # Declare load_action before initial menu update
+            load_action = None
+            update_menus()
+
+            # Plot canvas with frame
+            canvas_container = QWidget()
+            canvas_container.setStyleSheet("""
+                QWidget {
+                    border: 1px solid #ddd;
+                    border-radius: 5px;
+                    background: white;
+                }
+            """)
+            canvas_layout = QVBoxLayout(canvas_container)
+            plot_canvas = FigureCanvas(Figure(figsize=(10, 6)))
+            canvas_layout.addWidget(plot_canvas)
+
+            # Info section
+            info_widget = QWidget()
+            info_layout = QVBoxLayout()
+            info_widget.setStyleSheet("""
+                QWidget {
+                    background: #f5f5f5;
+                    border-radius: 5px;
+                    padding: 10px;
+                }
+                QLabel {
+                    font-size: 13px;
+                    padding: 5px;
+                }
+            """)
+
+            accuracy_label = QLabel("Accuracy: N/A")
+            inputs_label = QLabel("Used Data: N/A")
+            params_button = QPushButton("View Hyperparameters")
+            params_button.setEnabled(False)
+            params_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #e7f3ff;
+                    border: 1px solid #a6c8ff;
+                    border-radius: 5px;
+                    padding: 8px 15px;
+                    font-size: 13px;
+                }
+                QPushButton:hover {
+                    background-color: #d0e7ff;
+                }
+                QPushButton:disabled {
+                    background-color: #f0f0f0;
+                    border-color: #ddd;
+                    color: #999;
+                }
+            """)
+
+            info_layout.addWidget(accuracy_label)
+            info_layout.addWidget(inputs_label)
+            info_layout.addWidget(params_button)
+            info_widget.setLayout(info_layout)
+
+            def update_display(model_name):
+                if not model_name:
+                    return
+                    
+                model_info = self.model_manager.get_model_info(model_name)
+                if model_info:
+                    # Update plot
+                    plot_canvas.figure.clear()
+                    ax = plot_canvas.figure.add_subplot(111)
+                    
+                    time = np.arange(len(model_info['results']['y_true']))
+                    ax.plot(time, model_info['results']['y_true'], 'k-', label='Ground Truth')
+                    ax.plot(time, model_info['results']['y_pred'], 'r--', label='Prediction')
+                    
+                    ax.set_xlabel('Time')
+                    ax.set_ylabel('Phase')
+                    ax.set_title(f'Model {side} Predictions')
+                    ax.grid(True)
+                    ax.legend()
+                    
+                    plot_canvas.draw()
+
+                    # Update info
+                    accuracy_label.setText(f"Accuracy: {model_info['accuracy']:.2f}%")
+                    inputs_label.setText(f"Used Data: {', '.join(model_info['inputs'])}")
+                    params_button.setEnabled(True)
+                    
+                    def show_params():
+                        dialog = QDialog(self)
+                        dialog.setWindowTitle("Model Hyperparameters")
+                        dialog.setMinimumWidth(400)
+                        
+                        layout = QVBoxLayout()
+                        text = QTextBrowser()
+                        text.setStyleSheet("font-family: monospace;")
+                        
+                        params_text = ["Model Configuration:"]
+                        for key, value in model_info['hyperparameters'].items():
+                            params_text.append(f"• {key}: {value}")
+                            
+                        text.setText("\n".join(params_text))
+                        layout.addWidget(text)
+                        
+                        dialog.setLayout(layout)
+                        dialog.exec_()
+                        
+                    params_button.clicked.connect(show_params)
+
+            # Load model from combo selection
+            model_select_btn.clicked.connect(update_display)
+            
+            # Add initial items if any
+            model_select_btn.setText("Load Model...")
+            model_select_btn.setEnabled(True)
+            model_menu.addAction("No models found").setEnabled(False)
+
+            def on_menu_triggered(action):
+                if action == load_action:
+                    file_path, _ = QFileDialog.getOpenFileName(
+                        self, 
+                        "Load Model",
+                        "",
+                        "H5 Files (*.h5)"
+                    )
+                    if file_path and os.path.exists(file_path):
+                        if model_name := self.model_manager.load_model(file_path):
+                            # Add new model to menu
+                            new_action = model_menu.addAction(model_name)
+                            model_actions[new_action] = model_name
+                            # Update display
+                            model_select_btn.setText(model_name)
+                            update_display(model_name)
+                else:
+                    model_name = model_actions.get(action)
+                    if model_name:
+                        model_select_btn.setText(model_name)
+                        update_display(model_name)
+
+            model_menu.triggered.connect(on_menu_triggered)
+
+            # Layout assembly
+            layout.addWidget(model_select_btn)
+            layout.addWidget(canvas_container)
+            layout.addWidget(info_widget)
+            layout.setContentsMargins(10, 10, 10, 10)
+            section.setLayout(layout)
+            
+            return section, model_menu
+
+        # Create sections and get menus
+        left_section, left_menu = create_model_section("A")
+        right_section, right_menu = create_model_section("B")
         
-        model_a_file_btn = QPushButton("Select the model...")
-        model_a_file_btn.setStyleSheet("""
-            QPushButton {
-                border: 1px solid #a6c8ff;
-                border-radius: 5px;
-                padding: 5px 30px 5px 10px;  /* Right padding for icon */
-                background-color: #f9f9f9;
-                font-size: 14px;
-                color: #333;
-                text-align: left;
-            }
-            QPushButton:hover {
-                border: 1px solid #87ceeb;
-                background-color: #ffffff;
-            }
-            QPushButton::menu-indicator {
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                background-color: #4285f4;  
-                image: url(assets/arrow_down.png);
-                min-width: 20px;
-                min-height: 20px;
-                border: none;
-                right: 5px;
-            }
-        """)
-        # Add indicator icon 
-        icon = QIcon("assets/arrow_down.png")
-        model_a_file_btn.setIcon(icon)
-        model_a_file_btn.setIconSize(QSize(12, 12))
-        model_a_file_btn.setLayoutDirection(Qt.RightToLeft)
-        
-        # Connect file dialog
-        def load_model_a():
-            file_name, _ = QFileDialog.getOpenFileName(
-                self, "Select Model File", "", "H5 Files (*.h5)"
-            )
-            if file_name:
-                model_a_file_btn.setText(os.path.basename(file_name))
-                # Here you would add your logic to load the model
-        
-        model_a_file_btn.clicked.connect(load_model_a)
-        model_a_layout.addWidget(model_a_file_btn)
-        
-        model_a_plot = FigureCanvas(Figure(figsize=(10, 8)))  
-        model_a_plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.plot_step_prediction_vs_ground_truth(
-            model_a_plot.figure,
-            progress_state.test_results.get("y_true", []),
-            progress_state.test_results.get("y_pred", [])
-        )
-        model_a_layout.addWidget(model_a_plot)
-        
-        model_a_layout.addWidget(QLabel("<b><i>Accuracy</b></i>"), alignment=Qt.AlignLeft)
-        model_a_layout.addWidget(QLabel("<b><i>Used data</b></i>"), alignment=Qt.AlignLeft)
-        model_a_layout.addWidget(QLabel("<b><i>Summary of Hyperparameters</b></i>"), alignment=Qt.AlignLeft)
-        
-        comparison_layout.addLayout(model_a_layout)
-        
-        # Model B
-        model_b_layout = QVBoxLayout()
-        model_b_label = QLabel("<b><i>Model B</b></i>")
-        model_b_layout.addWidget(model_b_label, alignment=Qt.AlignCenter)
-        
-        model_b_file_btn = QPushButton("Select the model...")
-        model_b_file_btn.setStyleSheet(model_a_file_btn.styleSheet())
-        model_b_file_btn.setIcon(icon)
-        model_b_file_btn.setIconSize(QSize(12, 12))
-        model_b_file_btn.setLayoutDirection(Qt.RightToLeft)
-        
-        # Connect file dialog
-        def load_model_b():
-            file_name, _ = QFileDialog.getOpenFileName(
-                self, "Select Model File", "", "H5 Files (*.h5)"
-            )
-            if file_name:
-                model_b_file_btn.setText(os.path.basename(file_name))
-                # Here you would add your logic to load the model
-        
-        model_b_file_btn.clicked.connect(load_model_b)
-        model_b_layout.addWidget(model_b_file_btn)
-        
-        model_b_plot = FigureCanvas(Figure(figsize=(10, 8))) 
-        model_b_plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.plot_step_prediction_vs_ground_truth(
-            model_b_plot.figure,
-            progress_state.test_results.get("y_true", []),
-            progress_state.test_results.get("y_pred", [])
-        )
-        model_b_layout.addWidget(model_b_plot)
-        
-        model_b_layout.addWidget(QLabel("<b><i>Accuracy</b></i>"), alignment=Qt.AlignLeft)
-        model_b_layout.addWidget(QLabel("<b><i>Used data</b></i>"), alignment=Qt.AlignLeft)
-        model_b_layout.addWidget(QLabel("<b><i>Summary of Hyperparameters</b></i>"), alignment=Qt.AlignLeft)
-        
-        comparison_layout.addLayout(model_b_layout)
+        comparison_layout.addWidget(left_section)
+        comparison_layout.addWidget(right_section)
         
         layout.addLayout(comparison_layout)
+        layout.setContentsMargins(20, 20, 20, 20)
         page.setLayout(layout)
+        
         self.stacked_widget.addWidget(page)
 
     def add_empty_page(self):

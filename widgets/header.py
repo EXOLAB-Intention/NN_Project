@@ -148,9 +148,14 @@ class Header(QWidget):
         if hasattr(current_window, "cleanup_training_thread"):
             current_window.cleanup_training_thread()
         
-        # Get COMPLETE current state
+        if hasattr(current_window, "get_saved_state"):
+            saved_state = current_window.get_saved_state()
+        elif hasattr(current_window, "state"):
+            saved_state = current_window.state
+        else:
+            saved_state = {}
         saved_state = current_window.get_saved_state() if hasattr(current_window, "get_saved_state") else {}
-        
+
         if tab_name == "Neural Network Designer" and not progress_state.dataset_built:
             QMessageBox.warning(self, "Access Denied", "You must complete Dataset Builder first")
             return
@@ -160,20 +165,35 @@ class Header(QWidget):
             from windows.dataset_builder_window import DatasetBuilderWindow
             new_window = DatasetBuilderWindow(saved_state=saved_state)
         elif tab_name == "Neural Network Designer":
-            from windows.nn_designer_window import NeuralNetworkDesignerWindow
-            new_window = NeuralNetworkDesignerWindow(
-                dataset_path=saved_state.get("dataset_path"),
-                saved_state=saved_state
-            )
+            if hasattr(self.parent_window, "nn_designer_window") and self.parent_window.nn_designer_window is not None:
+                new_window = self.parent_window.nn_designer_window
+                # Ajoute cette ligne pour restaurer l'état des fichiers cochés
+                if hasattr(new_window, "restore_state"):
+                    new_window.restore_state()
+            else:
+                from windows.nn_designer_window import NeuralNetworkDesignerWindow
+                new_window = NeuralNetworkDesignerWindow(
+                    dataset_path=saved_state.get("dataset_path"),
+                    saved_state=saved_state
+                )
+                self.parent_window.nn_designer_window = new_window
+                new_window.parent_window = self.parent_window
         elif tab_name == "Neural Network Evaluator":
-            if not progress_state.training_started:
-                QMessageBox.warning(self, "Warning", "You must complete training first")
+        # Vérifie si l'entraînement a été complété ET non stoppé
+            if (not progress_state.training_started or 
+                not progress_state.test_results or 
+                (hasattr(current_window, "training_stopped") and current_window.training_stopped)):
+                QMessageBox.warning(self, "Warning", 
+                    "You must complete model training before accessing the NN Evaluator.")
                 return
-            if not hasattr(self.parent_window, "nn_evaluator_window") or self.parent_window.nn_evaluator_window is None:
-                from windows.nn_evaluator_window import NeuralNetworkEvaluator
-                self.parent_window.nn_evaluator_window = NeuralNetworkEvaluator(saved_state=saved_state)
-                self.parent_window.nn_evaluator_window.parent_window = self.parent_window
-            new_window = self.parent_window.nn_evaluator_window
+            elif tab_name == "Neural Network Evaluator":
+                if hasattr(self.parent_window, "nn_evaluator_window") and self.parent_window.nn_evaluator_window is not None:
+                    new_window = self.parent_window.nn_evaluator_window
+                else:
+                    from windows.nn_evaluator_window import NeuralNetworkEvaluator
+                    new_window = NeuralNetworkEvaluator(saved_state=saved_state)
+                    self.parent_window.nn_evaluator_window = new_window
+                    new_window.parent_window = self.parent_window
         else:
             QMessageBox.warning(self, "Error", f"Unsupported tab: {tab_name}")
             return

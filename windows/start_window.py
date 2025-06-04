@@ -188,6 +188,7 @@ class StartWindow(QMainWindow):
         )
         self.nn_designer_window.populate_file_list_with_paths(all_files, all_files)
         self.nn_designer_window.showMaximized()
+        self.nn_designer_window.parent_window = self
 
     def load_recent_folders(self):
         """
@@ -388,13 +389,29 @@ class StartWindow(QMainWindow):
                     "loss_function": training_params.get("loss_function", ""),
                     "training_history": history,
                     "test_results": test_results,
-                    "trained_model": model,
-                    "selected_files": checked_files  # Pour la logique interne
+                    "all_files": selected_files,
+                    "filtered_files": selected_files,       # ← essentiels pour l'affichage dans restore_state()
+                    "original_files": selected_files,      # tous les fichiers affichés
+                    "selected_files": checked_files,  # fichiers cochés
+                    "dataset_path": PROJECT_ROOT 
                 }
 
                 print("Debug - About to create NeuralNetworkDesignerWindow")
                 nn_designer = NeuralNetworkDesignerWindow(dataset_path=PROJECT_ROOT, saved_state=saved_state)
+                self.nn_designer_window = nn_designer  # AJOUTE CETTE LIGNE
+                nn_designer.parent_window = self       # AJOUTE CETTE LIGNE 
                 print("Debug - NeuralNetworkDesignerWindow created")
+
+                nn_designer.trained_model = model
+                nn_designer.training_history = history
+                nn_designer.test_results = test_results
+                nn_designer.training_completed = True
+                nn_designer.training_stopped = False
+                nn_designer.state["trained_model"] = model
+                nn_designer.state["training_history"] = history
+                nn_designer.state["test_results"] = test_results
+                nn_designer.state["training_completed"] = True
+                nn_designer.state["training_stopped"] = False
 
                 checked_file_names = [os.path.basename(f) for f in checked_files]
                 nn_designer.populate_file_list_with_paths(selected_files, checked_files)
@@ -408,8 +425,8 @@ class StartWindow(QMainWindow):
                 })
 
                 # 11. Connecter les fenêtres et régénérer les plots
-                nn_designer.nn_evaluator_window = nn_evaluator
-                nn_evaluator.parent_window = nn_designer
+                self.nn_evaluator_window = nn_evaluator  # AJOUTE CETTE LIGNE
+                nn_evaluator.parent_window = self   
 
                 nn_designer.plot_training_curves(history)
 
@@ -427,6 +444,10 @@ class StartWindow(QMainWindow):
                         )
                         nn_evaluator.prediction_scatter_plot_canvas(scatter_fig)
                         nn_evaluator.plot_confusion_matrix(true_labels, predicted_labels)
+
+                # Ajouter avant la ligne "self.hide()"
+                nn_designer.loaded_params = training_params  # Stocke les paramètres originaux
+                nn_designer.loaded_files = checked_files    # Stocke les fichiers originaux
 
                 # 12. Afficher NN Designer
                 self.hide()

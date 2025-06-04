@@ -525,18 +525,45 @@ class DatasetBuilderWindow(QMainWindow):
             QMessageBox.warning(self, "No Files", "No files available to build the dataset.")
             return
 
-        # ✅ 1. Vérifie si un dataset a déjà été créé dans progress_state
+        # ✅ 1. Vérifie si un dataset ou un modèle a déjà été créé/entraîné dans progress_state
         import windows.progress_state as progress_state
-        if getattr(progress_state, "dataset_built", False) and getattr(progress_state, "dataset_path", None):
-            if os.path.exists(progress_state.dataset_path):
-                reply = QMessageBox.question(
-                    self,
-                    "Dataset Already Exists",
-                    "A dataset already exists. Do you want to rebuild it?",
-                    QMessageBox.Yes | QMessageBox.No
-                )
-                if reply == QMessageBox.No:
-                    return  # ⛔ Ne continue pas si l'utilisateur refuse
+        model_trained = getattr(progress_state, "nn_designed", False)
+        dataset_built = getattr(progress_state, "dataset_built", False)
+        need_reset = False
+
+        if model_trained or dataset_built:
+            reply = QMessageBox.question(
+                self,
+                "Reset All Progress?",
+                "A model has already been trained or a dataset built. Rebuilding will reset ALL progress (model, training, évaluation). Continue?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                return  # ⛔ Ne continue pas si l'utilisateur refuse
+            need_reset = True
+
+        if need_reset:
+            # Reset tout l'état global
+            progress_state.nn_designed = False
+            progress_state.trained_model = None
+            progress_state.training_history = None
+            progress_state.test_results = None
+            progress_state.training_started = False
+            progress_state.dataset_built = False
+            progress_state.dataset_path = None
+
+             # Reset aussi les fenêtres NN Designer et NN Evaluator si elles existent
+            if hasattr(self, "nn_designer") and self.nn_designer:
+                self.nn_designer.training_history = None
+                self.nn_designer.trained_model = None
+                self.nn_designer.test_results = None
+                self.nn_designer.training_completed = False
+                self.nn_designer.training_stopped = False
+                self.nn_designer.training_monitor_text.clear()
+                self.nn_designer.nn_text_edit.setText("No parameters saved")
+                self.nn_designer.eval_stack.setCurrentIndex(0)
+            if hasattr(self, "nn_evaluator") and self.nn_evaluator:
+                self.nn_evaluator.test_results = None
 
         # Debug: Print all file names
         print("Files to process:")
@@ -715,7 +742,20 @@ class DatasetBuilderWindow(QMainWindow):
             saved_state.update({
                 "filtered_files": filtered_files,
                 "dataset_path": dataset_folder,
-                "selected_files": [] # Tous cochés par défaut
+                "selected_files": [],
+                "training_history": None,
+                "trained_model": None,
+                "test_results": None,
+                "training_completed": False,
+                "training_stopped": False,
+                "hyperparameters": None,         # <-- reset hyperparams
+                "optimizer": "Adam",             # <-- valeur par défaut
+                "loss_function": None,
+                "summary_text": "No parameters saved",  # <-- reset summary
+                "training_monitor_logs": "",
+                "training_progress": 0,
+                "eval_plot_index": 0,
+                "training_started": False
             })
    
             saved_state["filtered_files"] = [str(f) for f in filtered_files]
