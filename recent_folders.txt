@@ -1,5 +1,3 @@
-C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN_Project/datasets/dataset6
-C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN_Project/datasets/dataset18
+C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN_Project/datasets/dataset3
 C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN_Project/data10
 C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN_Project/datasets
-C:/Users/harry/OneDrive - UPEC/Documents/BUT2/Stage/KAIST/NN Package/NN_Project/datasets/dataset1

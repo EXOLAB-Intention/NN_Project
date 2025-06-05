@@ -39,14 +39,18 @@ class DatasetBuilderWindow(QMainWindow):
             "current_page": 0
         }
 
+        # ...existing code...
         if saved_state:
             self.state.update(saved_state)
-            if saved_state.get("returned_from_nn_designer"):
-                if "original_files" in saved_state:
-                    self.state["all_files"] = saved_state["original_files"]
-            else:
-                # Cas d’un dataset déjà construit (chargé depuis start_window)
-                self.state["all_files"] = []
+            # Toujours restaurer la liste actuelle si elle existe
+            if "original_files" in saved_state:
+                self.state["all_files"] = list(saved_state["original_files"])
+            # NE PAS vider filtered_files si on vient de NN Designer ou d'un modèle chargé
+            # On ne le vide que si on vient du StartWindow (par exemple si "from_start_window" dans le state)
+            if saved_state.get("from_start_window", False):
+                self.state["filtered_files"] = []
+            self.state["all_files"] = [f for f in self.state["all_files"] if not os.path.basename(f).startswith("filtered_")]
+
 
 
         # Pagination variables
@@ -470,7 +474,7 @@ class DatasetBuilderWindow(QMainWindow):
 
             # Store the selected folder path for later use
             self.state["selected_folder"] = folder_path
-
+            self.state["original_files"] = list(self.state["all_files"]) 
             # Display the first page
             self.state["current_page"] = 0
             self.show_page()
@@ -486,8 +490,12 @@ class DatasetBuilderWindow(QMainWindow):
         # Remove the selected items from the complete list of files
         for item in selected_items:
             file_name = item.text()
-            self.state["all_files"].remove(file_name)  
-            self.file_list.takeItem(self.file_list.row(item))  
+            if file_name in self.state["all_files"]:
+                self.state["all_files"].remove(file_name)
+            self.file_list.takeItem(self.file_list.row(item))
+        
+        # Met à jour la liste originale pour la persistance/navigation
+        self.state["original_files"] = list(self.state["all_files"])
 
     def update_progress_label(self, active_step, completed_steps=None):
         """
@@ -757,10 +765,11 @@ class DatasetBuilderWindow(QMainWindow):
                 "eval_plot_index": 0,
                 "training_started": False
             })
-   
+
             saved_state["filtered_files"] = [str(f) for f in filtered_files]
             saved_state["original_files"] = [str(f) for f in self.state["all_files"]]
             saved_state["returned_from_nn_designer"] = True
+            saved_state["all_files"] = [str(f) for f in filtered_files]
             progress_state.dataset_built = True
             from windows.nn_designer_window import NeuralNetworkDesignerWindow
             self.nn_designer = NeuralNetworkDesignerWindow(
@@ -773,23 +782,21 @@ class DatasetBuilderWindow(QMainWindow):
             QMessageBox.warning(self, "No Files Processed", "No files were successfully processed.")
 
     def open_nn_designer(self, filtered_files, dataset_folder):
-        """
-        Open the Neural Network Designer window with the filtered dataset and the current state of the Dataset Builder.
-
-        Args:
-            filtered_files (list): List of filtered .h5 file names.
-            dataset_folder (str): Path to the dataset folder.
-        """
-        # Get the current state of the Dataset Builder
-        saved_state = self.get_saved_state() 
-        from windows.nn_designer_window import NeuralNetworkDesignerWindow 
+        saved_state = self.get_saved_state()
+        # Si filtered_files est vide, on passe les originaux
+        if not filtered_files:
+            saved_state["all_files"] = list(self.state["all_files"])
+        else:
+            saved_state["all_files"] = list(filtered_files)
+        print("filtered_files:", filtered_files)
+        print("saved_state['all_files']:", saved_state["all_files"])
+        from windows.nn_designer_window import NeuralNetworkDesignerWindow
         self.nn_designer_window = NeuralNetworkDesignerWindow(
             dataset_path=dataset_folder,
             saved_state=saved_state
         )
-        # Pass filtered file names to NN Designer
-        print("Filtered files passed to NN Designer:", self.state["filtered_files"])
-        self.nn_designer_window.populate_file_list_with_paths(filtered_files)  
+        
+        self.nn_designer_window.populate_file_list_with_paths(saved_state["all_files"])
         self.nn_designer_window.showMaximized()
         self.hide()
 
@@ -903,6 +910,7 @@ class DatasetBuilderWindow(QMainWindow):
         # Restore file list
         if self.state["all_files"]:
             self.file_list.clear()
+            # NE GARDE QUE LES FICHIERS NON FILTRÉS
             self.file_list.addItems(self.state["all_files"])
 
         # Restore input checkboxes
@@ -914,4 +922,5 @@ class DatasetBuilderWindow(QMainWindow):
         Get the current state including checkbox states.
         """
         self.state["selected_inputs"] = [cb.text() for cb in self.emg_checkboxes + self.imu_checkboxes if cb.isChecked()]
+        self.state["original_files"] = list(self.state["all_files"])  # <-- Ajoute ou vérifie cette ligne
         return self.state

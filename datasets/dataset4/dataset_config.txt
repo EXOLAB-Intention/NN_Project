@@ -1,7 +1,10 @@
-Dataset Creation Date: 2025-06-03 11:37:08
+Dataset Creation Date: 2025-06-05 17:12:20
 
 Selected Inputs:
 - emgR2
+- emgL3
+- imu3
+- imu4
 
 Selected Outputs:
 - button_ok

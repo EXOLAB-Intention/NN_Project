@@ -37,7 +37,8 @@ class NeuralNetworkEvaluator(QMainWindow):
         self.setGeometry(100, 100, 1200, 800)
         
         self.test_results = progress_state.test_results
-
+        self.state = saved_state or {}
+        print("[DEBUG] Initial state in __init__:", self.state)
         # Central widget and layout
         central_widget = QWidget()
         parent_layout = QVBoxLayout()  
@@ -131,6 +132,7 @@ class NeuralNetworkEvaluator(QMainWindow):
         # Add menu bar
         self.add_menu_bar()
         self.state = saved_state or {}
+        print("[DEBUG] Initial state in __init__:", self.state)
 
     def update_progress_label(self, active_step, completed_steps=None):
         """
@@ -600,6 +602,7 @@ class NeuralNetworkEvaluator(QMainWindow):
 
     def add_compare_models_page(self):
         """Add the Compare Models page with dropdown model selection"""
+        print("[DEBUG][Evaluator] self.state at entry:", self.state)
         page = QWidget()
         layout = QVBoxLayout()
         comparison_layout = QHBoxLayout()
@@ -608,27 +611,23 @@ class NeuralNetworkEvaluator(QMainWindow):
         if not hasattr(self, 'model_manager'):
             from utils.model_manager import ModelManager
             self.model_manager = ModelManager()
-
-        # Add current model if exists
-        if hasattr(self, 'test_results') and self.test_results:
-            self.model_manager.add_current_model({
-                'y_true': self.test_results.get('y_true', []),
-                'y_pred': self.test_results.get('y_pred', []),
-                'accuracy': self.test_results.get('accuracy', 0.0)
-            })
+            
+        # Declare sections early so they can be used in update_all_menus
+        left_section = None
+        right_section = None
 
         def create_model_section(side: str):
             section = QWidget()
             layout = QVBoxLayout()
 
-            # Model selection button
-            model_select_btn = QPushButton(f"Select Model {side}")
+            # Create model selection button
+            model_select_btn = QPushButton(f"Select Model {side}...")
             model_select_btn.setStyleSheet("""
                 QPushButton {
-                    border: 1px solid #dcdcdc;
+                    border: 1px solid #a6c8ff;
                     border-radius: 5px;
-                    padding: 5px 30px 5px 10px;
-                    background-color: white;
+                    padding: 5px 10px;
+                    background-color: #f9f9f9;
                     font-size: 14px;
                     color: #333;
                     text-align: left;
@@ -636,64 +635,65 @@ class NeuralNetworkEvaluator(QMainWindow):
                 }
                 QPushButton:hover {
                     border: 1px solid #87ceeb;
-                    background-color: #f8f8f8;
+                    background-color: #ffffff;
                 }
                 QPushButton::menu-indicator {
                     subcontrol-origin: padding;
-                    subcontrol-position: top right;
-                    image: url(assets/arrow_down.png);
-                    min-width: 20px;
-                    min-height: 20px;
-                    border: none;
-                    right: 5px;
+                    subcontrol-position: center right;
+                    width: 15px;
+                    height: 15px;
+                    margin-right: 5px;
                 }
             """)
 
-            # Create menu and store actions dictionary
+            # Create menu for button
             model_menu = QMenu()
-            model_actions = {}
-            
-            def update_menus():
-                """Update both menus with current models"""
-                model_menu.clear()
-                # Store load_action in the outer scope
-                nonlocal load_action  
-                load_action = model_menu.addAction("Load Model...")
-                model_menu.addSeparator()
-                
-                model_names = self.model_manager.get_model_names()
-                if not model_names:
-                    no_models = model_menu.addAction("No models found")
-                    no_models.setEnabled(False)
-                else:
-                    for name in model_names:
-                        action = model_menu.addAction(name)
-                        model_actions[action] = name
+            model_menu.setStyleSheet("""
+                QMenu {
+                    background-color: white;
+                    border: 1px solid #dcdcdc;
+                    padding: 5px;
+                }
+                QMenu::item {
+                    padding: 5px 20px;
+                    border-radius: 3px;
+                }
+                QMenu::item:selected {
+                    background-color: #e7f3ff;
+                }
+            """)
 
-            def on_menu_triggered(action):
-                if action.text() == "Load Model...":
-                    file_path, _ = QFileDialog.getOpenFileName(
-                        self, "Load Model", "", "H5 Files (*.h5)"
-                    )
-                    if file_path and os.path.exists(file_path):
-                        if model_name := self.model_manager.load_model(file_path):
-                            model_select_btn.setText(model_name)
-                            update_display(model_name)
-                            update_menus()  # Update both menus
-                elif action.text() != "No models found":
-                    model_name = action.text()
-                    model_select_btn.setText(model_name)
-                    update_display(model_name)
+            # Add Load Model action
+            load_action = model_menu.addAction("Load Model...")
 
-            # Connect menu trigger
-            model_menu.triggered.connect(on_menu_triggered)
-            model_select_btn.setMenu(model_menu)
+            def update_menu(menu):
+                # Clear existing items except "Load Model..."
+                for action in menu.actions():
+                    if action.text() != "Load Model...":
+                        menu.removeAction(action)
+        
+                menu.addSeparator()
+                model_actions = {}
+                models = self.model_manager.get_model_names()
 
-            # Declare load_action before initial menu update
-            load_action = None
-            update_menus()
+                # Add other models alphabetically
+                for model_name in sorted(models):
+                    if model_name != 'Current Model':
+                        action = menu.addAction(model_name)
+                        model_actions[action] = model_name
+        
+                return model_actions
 
-            # Plot canvas with frame
+            def update_all_menus():
+                nonlocal left_section, right_section
+                # Update both left and right menus
+                for section in [left_section, right_section]:
+                    if section:  # Check if section exists
+                        menu = section.findChild(QPushButton).menu()
+                        if menu:
+                            update_menu(menu)
+
+            # Create plot canvas
             canvas_container = QWidget()
             canvas_container.setStyleSheet("""
                 QWidget {
@@ -706,7 +706,7 @@ class NeuralNetworkEvaluator(QMainWindow):
             plot_canvas = FigureCanvas(Figure(figsize=(10, 6)))
             canvas_layout.addWidget(plot_canvas)
 
-            # Info section
+            # Create info section
             info_widget = QWidget()
             info_layout = QVBoxLayout()
             info_widget.setStyleSheet("""
@@ -743,67 +743,110 @@ class NeuralNetworkEvaluator(QMainWindow):
                 }
             """)
 
+            # Ajouter les widgets au layout AVANT la définition de show_params
             info_layout.addWidget(accuracy_label)
             info_layout.addWidget(inputs_label)
             info_layout.addWidget(params_button)
             info_widget.setLayout(info_layout)
 
+            def show_params():
+                """Show model parameters in a clean dialog window"""
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Model Parameters")
+                dialog.setFixedSize(400, 300)
+                
+                layout = QVBoxLayout()
+                text = QTextBrowser()
+                
+                hyperparams = getattr(params_button, 'hyperparams', {})
+                
+                # Format layers info
+                layers = hyperparams.get('layers', [])
+                layer_types = [layer['type'] for layer in layers] if layers else ['LSTM']
+                
+                # Create formatted parameter text
+                params_text = [
+                    "Parameters saved:",
+                    f"• Optimizer: {hyperparams.get('optimizer', 'Adam')}",
+                    f"• Loss Function: {hyperparams.get('loss_function', 'CrossEntropyLoss')}",
+                    f"• Layer Types: {', '.join(layer_types)}",
+                    f"• Sequence Length: {hyperparams.get('sequence_length', '50')}",
+                    f"• Stride: {hyperparams.get('stride', '5')}",
+                    f"• Batch Size: {hyperparams.get('batch_size', '32')}",
+                    f"• Epoch Number: {hyperparams.get('epoch_number', '10')}",
+                    f"• Learning Rate: {hyperparams.get('learning_rate', '0.001')}"
+                ]
+                
+                text.setText('\n'.join(params_text))
+                layout.addWidget(text)
+                
+                close_btn = QPushButton("Close")
+                close_btn.clicked.connect(dialog.accept)
+                
+                button_layout = QHBoxLayout()
+                button_layout.addStretch()
+                button_layout.addWidget(close_btn)
+                button_layout.addStretch()
+                layout.addLayout(button_layout)
+                
+                dialog.setLayout(layout)
+                dialog.exec_()
+    
+            params_button.clicked.connect(show_params)
+
             def update_display(model_name):
                 if not model_name:
+                    print(f"[DEBUG] {side}: No model name provided")
                     return
-                    
+                print(f"[DEBUG] update_display called for {side} with model_name={model_name}")
                 model_info = self.model_manager.get_model_info(model_name)
-                if model_info:
-                    # Update plot
-                    plot_canvas.figure.clear()
-                    ax = plot_canvas.figure.add_subplot(111)
-                    
-                    time = np.arange(len(model_info['results']['y_true']))
-                    ax.plot(time, model_info['results']['y_true'], 'k-', label='Ground Truth')
-                    ax.plot(time, model_info['results']['y_pred'], 'r--', label='Prediction')
-                    
-                    ax.set_xlabel('Time')
-                    ax.set_ylabel('Phase')
-                    ax.set_title(f'Model {side} Predictions')
-                    ax.grid(True)
-                    ax.legend()
-                    
-                    plot_canvas.draw()
+                print(f"[DEBUG] model_info for {model_name}:", model_info)
+                if not model_info:
+                    print(f"[DEBUG] {side}: No model info found for {model_name}")
+                    return
 
-                    # Update info
-                    accuracy_label.setText(f"Accuracy: {model_info['accuracy']:.2f}%")
-                    inputs_label.setText(f"Used Data: {', '.join(model_info['inputs'])}")
-                    params_button.setEnabled(True)
-                    
-                    def show_params():
-                        dialog = QDialog(self)
-                        dialog.setWindowTitle("Model Hyperparameters")
-                        dialog.setMinimumWidth(400)
-                        
-                        layout = QVBoxLayout()
-                        text = QTextBrowser()
-                        text.setStyleSheet("font-family: monospace;")
-                        
-                        params_text = ["Model Configuration:"]
-                        for key, value in model_info['hyperparameters'].items():
-                            params_text.append(f"• {key}: {value}")
-                            
-                        text.setText("\n".join(params_text))
-                        layout.addWidget(text)
-                        
-                        dialog.setLayout(layout)
-                        dialog.exec_()
-                        
-                    params_button.clicked.connect(show_params)
+                # Update button text
+                print(f"[DEBUG] {side}: Setting button text to {model_name}")
+                model_select_btn.setText(model_name)
 
-            # Load model from combo selection
-            model_select_btn.clicked.connect(update_display)
-            
-            # Add initial items if any
-            model_select_btn.setText("Load Model...")
-            model_select_btn.setEnabled(True)
-            model_menu.addAction("No models found").setEnabled(False)
+                # Update canvas
+                plot_canvas.figure.clear()
+                if model_info.get('results'):
+                    self.test_results = model_info['results']
+                    self.plot_prediction_and_curves(plot_canvas.figure)
+                plot_canvas.draw()
 
+               
+                # Pour les modèles chargés, utiliser les infos du model_info
+                accuracy = model_info.get('accuracy', 0.0)
+                inputs = model_info.get('inputs', [])
+                hyperparams = model_info.get('hyperparameters', {})
+
+                print(f"[DEBUG] Hyperparameters for {model_name}:", hyperparams)
+
+                # Mettre à jour les labels
+                accuracy_label.setText(f"Accuracy: {accuracy:.2f}%")
+                
+                # Formatter les inputs pour l'affichage
+                input_text = ", ".join(inputs) if inputs else "No input data"
+                inputs_label.setText(f"Used Data: {input_text}")
+                
+                # Activer le bouton des hyperparamètres seulement si on a des données
+                has_params = bool(hyperparams and any(hyperparams.values()))
+                params_button.setEnabled(has_params)
+                
+                # Sauvegarder les hyperparamètres pour l'affichage du dialogue
+                params_button.hyperparams = hyperparams
+
+                print(f"[DEBUG] Button hyperparams:", getattr(params_button, 'hyperparams', 'Not set'))  # Debug line
+                
+                # Sauvegarder le modèle sélectionné dans l'état
+                if not hasattr(self, "state"):
+                    self.state = {}
+                if "compare_models" not in self.state:
+                    self.state["compare_models"] = {}
+                self.state["compare_models"][side] = model_name
+                
             def on_menu_triggered(action):
                 if action == load_action:
                     file_path, _ = QFileDialog.getOpenFileName(
@@ -814,18 +857,16 @@ class NeuralNetworkEvaluator(QMainWindow):
                     )
                     if file_path and os.path.exists(file_path):
                         if model_name := self.model_manager.load_model(file_path):
-                            # Add new model to menu
-                            new_action = model_menu.addAction(model_name)
-                            model_actions[new_action] = model_name
-                            # Update display
-                            model_select_btn.setText(model_name)
+                            update_all_menus()
                             update_display(model_name)
                 else:
-                    model_name = model_actions.get(action)
-                    if model_name:
-                        model_select_btn.setText(model_name)
+                    model_actions = {a.text(): name for a, name in update_menu(model_menu).items()}
+                    if model_name := model_actions.get(action.text()):
                         update_display(model_name)
 
+            # Initialize menu and connect signals
+            model_actions = update_menu(model_menu)
+            model_select_btn.setMenu(model_menu)
             model_menu.triggered.connect(on_menu_triggered)
 
             # Layout assembly
@@ -834,13 +875,31 @@ class NeuralNetworkEvaluator(QMainWindow):
             layout.addWidget(info_widget)
             layout.setContentsMargins(10, 10, 10, 10)
             section.setLayout(layout)
+            section.update_display = update_display
             
-            return section, model_menu
-
-        # Create sections and get menus
-        left_section, left_menu = create_model_section("A")
-        right_section, right_menu = create_model_section("B")
+            return section
         
+        saved_compare = self.state.get("compare_models", {}) if hasattr(self, "state") else {}
+        for side in ["A", "B"]:
+            model_name = saved_compare.get(side)
+            if model_name and not self.model_manager.get_model_info(model_name):
+                filepath = os.path.join(os.getcwd(), f"{model_name}.h5")
+                if os.path.exists(filepath):
+                    self.model_manager.load_model(filepath)
+                    print(f"[DEBUG] Chargé automatiquement {filepath} pour {side}")
+                else:
+                    print(f"[DEBUG] Fichier {filepath} introuvable pour {side}")
+                    
+        # Crée les sections et stocke update_display pour chaque côté
+        left_section = create_model_section("A")
+        print("[DEBUG] left_section:", left_section)
+        print("[DEBUG] hasattr(left_section, 'update_display'):", hasattr(left_section, 'update_display'))
+        left_update_display = left_section.update_display
+        print("[DEBUG] left_update_display:", left_update_display)
+        right_section = create_model_section("B")
+        right_update_display = right_section.update_display
+        print("[DEBUG] right_update_display:", right_update_display)
+
         comparison_layout.addWidget(left_section)
         comparison_layout.addWidget(right_section)
         
@@ -849,7 +908,18 @@ class NeuralNetworkEvaluator(QMainWindow):
         page.setLayout(layout)
         
         self.stacked_widget.addWidget(page)
-
+        
+        # Restaurer la sélection si elle existe
+        print("[DEBUG][Evaluator] self.state at entry:", self.state)
+        saved_compare = self.state.get("compare_models", {}) if hasattr(self, "state") else {}
+        print("[DEBUG] saved_compare:", saved_compare)
+        if "A" in saved_compare:
+            print(f"[DEBUG] Restoring left model: {saved_compare['A']}")
+            left_update_display(saved_compare["A"])
+        if "B" in saved_compare:
+            print(f"[DEBUG] Restoring right model: {saved_compare['B']}")
+            right_update_display(saved_compare["B"])
+        
     def add_empty_page(self):
         """
         Add an empty page to the stacked widget as the default page.
@@ -1036,3 +1106,4 @@ class NeuralNetworkEvaluator(QMainWindow):
 
         ax.xaxis.set_major_locator(ticker.MaxNLocator(nbins=10))
         fig.tight_layout()
+

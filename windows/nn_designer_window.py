@@ -162,7 +162,9 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             self.add_layer_combo_row(config=layer_cfg)
 
         # --- Ajout pour restaurer la liste des fichiers et les cases cochées ---
-        all_files = self.state.get("filtered_files") or self.state.get("all_files") or []
+        all_files = self.state.get("filtered_files")
+        if not all_files:
+            all_files = [f for f in self.state.get("all_files", []) if os.path.basename(str(f)).startswith("filtered_")]
         selected_files = self.state.get("selected_files", [])
         if all_files:
             self.populate_file_list_with_paths(all_files, selected_files)
@@ -1388,6 +1390,27 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                 self.nn_text_edit.setText(f"✅ Training complete\n\nAccuracy: {acc:.3f}\n\n{report}")
                 self.plot_training_curves(history)
 
+                # Update current model in evaluator windows if they exist
+                evaluator_windows = [w for w in QApplication.instance().topLevelWidgets() 
+                                    if isinstance(w, NeuralNetworkEvaluator)]
+                
+                for evaluator in evaluator_windows:
+                    current_model_info = {
+                        'results': {
+                            'y_true': test_results['true_labels'],
+                            'y_pred': test_results['predictions'],
+                            'time': test_results.get('time', []),
+                            'accuracy': acc
+                        },
+                        'inputs': self.last_training_files,
+                        'hyperparameters': self.last_training_params
+                    }
+                    evaluator.model_manager.models['Current Model'] = current_model_info
+                    
+                    # Update menus if they exist
+                    if hasattr(evaluator, 'update_current_model'):
+                        evaluator.update_current_model()
+
                 # Update global progress state
                 progress_state.nn_designed = True
                 progress_state.trained_model = model
@@ -1703,11 +1726,35 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                     for i, weight in enumerate(weights):
                         layer_group.create_dataset(f'weight_{i}', data=weight)
 
-                # 3. Sauvegarder les paramètres d'entraînement
+                # 3. Récupérer et sauvegarder les inputs depuis les fichiers filtrés
+                selected_inputs = []
+                project_root = self.find_project_root()
+                
+                # Parcourir les fichiers sélectionnés
+                for i in range(self.file_list.count()):
+                    item = self.file_list.item(i)
+                    if item.checkState() == Qt.Checked:
+                        rel_path = item.data(Qt.UserRole)
+                        file_path = self.file_name_to_path.get(rel_path)
+                        if file_path and os.path.exists(file_path):
+                        
+                            # Lire le fichier H5 pour extraire les noms des datasets
+                            with h5py.File(file_path, 'r') as f:
+                                # Parcourir tous les trials
+                                for trial in f.keys():
+                                    if isinstance(f[trial], h5py.Group):
+                                        # Récupérer tous les inputs dans ce trial (emg, imu)
+                                        for input_name in f[trial].keys():
+                                            if input_name.startswith(('emg', 'imu')) and input_name not in selected_inputs:
+                                                selected_inputs.append(input_name)
+                        else:
+                            print(f"[WARNING] Fichier introuvable pour l'extraction des inputs: {file_path}")
+                # Sauvegarder les paramètres d'entraînement avec les inputs
                 training_params = {
                     'optimizer': self.state.get('optimizer', ''),
                     'loss_function': self.state.get('loss_function', ''),
-                    'hyperparameters': self.state.get('hyperparameters', {})
+                    'hyperparameters': self.state.get('hyperparameters', {}),
+                    'selected_inputs': selected_inputs  # Ajouter les inputs détectés
                 }
                 hf.create_dataset('training_params', data=json.dumps(training_params).encode('utf-8'))
 

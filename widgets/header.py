@@ -191,6 +191,15 @@ class Header(QWidget):
                     new_window = self.parent_window.nn_evaluator_window
                 else:
                     from windows.nn_evaluator_window import NeuralNetworkEvaluator
+                    
+                    # ...dans on_tab_clicked, juste avant new_window = NeuralNetworkEvaluator(saved_state=saved_state)
+                    if hasattr(current_window, "state") and hasattr(current_window, "get_saved_state"):
+                        # Merge compare_models if it exists
+                        state = current_window.get_saved_state()
+                        if "compare_models" in current_window.state:
+                            state["compare_models"] = current_window.state["compare_models"]
+                        saved_state = state
+                    print("[DEBUG][Header] saved_state before NN Evaluator:", saved_state)
                     new_window = NeuralNetworkEvaluator(saved_state=saved_state)
                     self.parent_window.nn_evaluator_window = new_window
                     new_window.parent_window = self.parent_window

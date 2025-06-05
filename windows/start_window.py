@@ -129,6 +129,7 @@ class StartWindow(QMainWindow):
         progress_state.dataset_built = False  # Reset progress state
         progress_state.nn_designed = False
         progress_state.training_started = False  # Reset training state
+        saved_state = {"from_start_window": True}
         self.set_tabs_enabled(False)  # Disable tabs during dataset creation
         self.dataset_builder = DatasetBuilderWindow(start_window_ref=self)  
         self.dataset_builder.showMaximized()
