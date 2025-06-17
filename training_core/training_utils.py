@@ -48,11 +48,14 @@ def build_flexible_model(layer_configs, input_shape, num_classes=2):
         dropout = float(cfg.get("dropout", 0.0))
         activation = cfg.get("activation", "tanh")
 
+        # Check if the current layer type is a recurrent layer (LSTM, GRU, or SimpleRNN)
         if ltype in ["LSTM", "GRU", "RNN"]:
+            # Get the number of units for the recurrent layer, defaulting to 64 if not specified
             units = int(cfg.get("units", 64))
+            # Determine if the layer should be bidirectional (convert string to boolean)
             bidirectional = str(cfg.get("bidirectional", "False")).lower() == "true"
-
             rnn_layer = None
+            # Instantiate the correct type of recurrent layer with the specified parameters
             if ltype == "LSTM":
                 rnn_layer = layers.LSTM(units, return_sequences=return_seq, dropout=dropout, activation=activation)
             elif ltype == "GRU":
@@ -60,12 +63,15 @@ def build_flexible_model(layer_configs, input_shape, num_classes=2):
             elif ltype == "RNN":
                 rnn_layer = layers.SimpleRNN(units, return_sequences=return_seq, dropout=dropout, activation=activation)
 
+            # If bidirectional is enabled, wrap the layer with Bidirectional; otherwise, use the layer as is
             if bidirectional:
                 x = layers.Bidirectional(rnn_layer)(x)
             else:
                 x = rnn_layer(x)
 
+        # Check if the current layer type is Transformer or TinyTransformer
         elif ltype in ["Transformer", "TinyTransformer"]:
+            # Retrieve model dimension, number of attention heads, and attention dropout rate from config
             d_model = int(cfg.get("d_model", 64))
             num_heads = int(cfg.get("num_heads", 2))
             attention_dropout = float(cfg.get("attention_dropout", 0.1))
@@ -76,6 +82,7 @@ def build_flexible_model(layer_configs, input_shape, num_classes=2):
             # Multi-head attention block
             attn = layers.MultiHeadAttention(num_heads=num_heads, key_dim=d_model // num_heads,
                                              dropout=attention_dropout)(x, x)
+            # Add residual connection and layer normalization
             x = layers.LayerNormalization()(x + attn)
 
             # Feed-forward block
@@ -83,21 +90,26 @@ def build_flexible_model(layer_configs, input_shape, num_classes=2):
             ff = layers.Dense(d_model)(ff)
             x = layers.LayerNormalization()(x + ff)
 
+            # If this is the last layer in the sequence, apply global average pooling to reduce dimensionality
             if not return_seq:
                 x = layers.GlobalAveragePooling1D()(x)
 
     # Final pooling if necessary
-    if len(x.shape) == 3:  # Replace x.shape.rank with len(x.shape)
+    if len(x.shape) == 3: 
         x = layers.GlobalAveragePooling1D()(x)
 
+    # Dense layer with ReLU activation for feature transformation
     x = layers.Dense(32, activation="relu")(x)
+    # Add dropout for regularization to help prevent overfitting
     x = layers.Dropout(0.2)(x)
 
+    # Output layer: sigmoid for binary, softmax for multi-class
     if num_classes == 1:
         output = layers.Dense(1, activation="sigmoid")(x)
     else:
         output = layers.Dense(num_classes, activation="softmax")(x)
 
+    # Build and return the Keras model
     return Model(inputs, output)
 
 
@@ -136,6 +148,7 @@ def get_model(model_type, input_shape, num_classes=2, num_layers=2):
         raise ValueError(f"Unknown model type: {model_type}")
 
 def get_optimizer(name, lr=0.001):
+    '''  # Return the corresponding Keras optimizer based on the name and learning rate '''
     if name == "Adam":
         return optimizers.Adam(learning_rate=lr)
     elif name == "SGD":
@@ -146,6 +159,7 @@ def get_optimizer(name, lr=0.001):
         raise ValueError("Optimizer not supported.")
 
 def get_loss_function(loss_name, class_weights=None):
+    '''  # Return the corresponding Keras loss function based on the name '''
     if loss_name == "MSELoss":
         return losses.MeanSquaredError()
     elif loss_name == "SmoothL1Loss":
@@ -153,7 +167,7 @@ def get_loss_function(loss_name, class_weights=None):
     elif loss_name == "HuberLoss":
         return losses.Huber()
     elif loss_name == "CrossEntropyLoss":
-        return losses.SparseCategoricalCrossentropy()
+        return losses.CategoricalCrossentropy()
     elif loss_name == "BCEWithLogitsLoss":
         return losses.BinaryCrossentropy()
     else:
@@ -171,7 +185,9 @@ def load_and_preprocess_data(path, window_size=10, stride=3, selected_keys=None)
                     continue
                 trial = h5file[trial_name]
                 available_keys = list(trial.keys())
-                emg_keys = [k for k in available_keys if k.startswith("emg")]
+                emg_keys = [k for k in available_keys if k.startswith("emg") and k.endswith("_norm")]
+                if not emg_keys:
+                    emg_keys = [k for k in available_keys if k.startswith("emg")]
                 imu_keys = [k for k in available_keys if k.startswith("imu")]
                 if selected_keys is not None:
                     emg_keys = [k for k in emg_keys if k in selected_keys]
@@ -179,10 +195,12 @@ def load_and_preprocess_data(path, window_size=10, stride=3, selected_keys=None)
                 X = []
                 for key in emg_keys:
                     signal = np.array(trial[key])[0]
-                    std = signal.std()
-                    if std < 1e-6:
-                        continue
-                    signal = (signal - signal.mean()) / (std + 1e-8)
+                    # NE PAS renormaliser si déjà _norm
+                    if not key.endswith("_norm"):
+                        std = signal.std()
+                        if std < 1e-6:
+                            continue
+                        signal = (signal - signal.mean()) / (std + 1e-8)
                     X.append(signal)
                 for key in imu_keys:
                     imu_data = np.array(trial[key])
@@ -200,24 +218,24 @@ def load_and_preprocess_data(path, window_size=10, stride=3, selected_keys=None)
                 
                 X_windows, y_windows = create_sliding_windows(X, y, window_size, stride)
                 # Filtrer et équilibrer les classes
-                y_unique, y_counts = np.unique(y_windows, return_counts=True)
-                min_count = min(y_counts)
+                #y_unique, y_counts = np.unique(y_windows, return_counts=True)
+                #min_count = min(y_counts)
 
                 # Sélection aléatoire pour équilibrer les classes
-                balanced_indices = []
-                for label in y_unique:
-                    indices = np.where(y_windows == label)[0]
-                    selected_indices = np.random.choice(indices, min_count, replace=False)
-                    balanced_indices.extend(selected_indices)
+                #balanced_indices = []
+                #for label in y_unique:
+                 #   indices = np.where(y_windows == label)[0]
+                 #   selected_indices = np.random.choice(indices, min_count, replace=False)
+                 #   balanced_indices.extend(selected_indices)
 
-                balanced_indices = np.array(balanced_indices)
+                #balanced_indices = np.array(balanced_indices)
 
                 # Mettre à jour X_windows et y_windows
-                X_windows = X_windows[balanced_indices]
-                y_windows = y_windows[balanced_indices]
+                #X_windows = X_windows[balanced_indices]
+                #y_windows = y_windows[balanced_indices]
 
                 # Vérifier l'équilibre des classes
-                print(f"Classes après équilibrage : {dict(zip(*np.unique(y_windows, return_counts=True)))}")
+                #print(f"Classes après équilibrage : {dict(zip(*np.unique(y_windows, return_counts=True)))}")
 
                 print("Nombre de fenêtres générées :", len(X_windows))
                 X_all.append(X_windows)
@@ -511,43 +529,79 @@ def train_model(X_train, X_val, X_test, y_train, y_val, y_test,
     from sklearn.metrics import accuracy_score, classification_report
     tf.random.set_seed(42)
     np.random.seed(42)
-    input_shape = (X_train.shape[1], X_train.shape[2])
-    num_classes = len(np.unique(y_train))
-    if loss_name in ["BCEWithLogitsLoss", "MSELoss", "SmoothL1Loss", "HuberLoss"]:
-        num_classes = 1
+    from tensorflow.keras.utils import to_categorical
 
-    # Force multi-class classification if we detect multiple classes
+
     num_unique_classes = len(np.unique(y_train))
-    if num_unique_classes > 2:
-        print(f"✅ Detected {num_unique_classes} classes - forcing multi-class mode")
+    input_shape = (X_train.shape[1], X_train.shape[2])
+
+    if loss_name == "CrossEntropyLoss":
+        # Multi-classe one-hot
+        num_classes = num_unique_classes
+        y_train = to_categorical(y_train, num_classes)
+        y_val = to_categorical(y_val, num_classes)
+        y_test = to_categorical(y_test, num_classes)
+        metrics = ['accuracy']
+        loss_fn = losses.CategoricalCrossentropy()
+        print(f"📌 Loss function sélectionnée : {loss_name} → {type(loss_fn).__name__}")
+        class_weights = None
+    elif loss_name in ["BCEWithLogitsLoss"]:
+        # Binaire (sigmoïde) ou multi-label (rare)
+        num_classes = num_unique_classes
+        y_train = to_categorical(y_train, num_classes)
+        y_val = to_categorical(y_val, num_classes)
+        y_test = to_categorical(y_test, num_classes)
+        metrics = ['accuracy']
+        loss_fn = losses.BinaryCrossentropy()
+        print(f"📌 Loss function sélectionnée : {loss_name} → {type(loss_fn).__name__}")
+        class_weights = None
+
+    elif loss_name in ["MSELoss", "SmoothL1Loss", "HuberLoss"]:
+        # Régression
+        num_classes = num_unique_classes
+        y_train = to_categorical(y_train, num_classes)
+        y_val = to_categorical(y_val, num_classes)
+        y_test = to_categorical(y_test, num_classes)
+        metrics = ['accuracy']
+        loss_fn = get_loss_function(loss_name)
+        print(f"📌 Loss function sélectionnée : {loss_name} → {type(loss_fn).__name__}")
+        class_weights = None
+
+    elif num_unique_classes > 2:
+        # Multi-classe entiers (SparseCategoricalCrossentropy)
         num_classes = num_unique_classes
         metrics = ['sparse_categorical_accuracy']
         loss_fn = losses.SparseCategoricalCrossentropy()
-        
-        # Calculate class weights properly
+        from collections import Counter
         class_counts = Counter(y_train)
         total_samples = sum(class_counts.values())
         class_weights = {i: total_samples / (len(class_counts) * count) for i, count in class_counts.items()}
-        
         print("📊 Class distribution:", dict(class_counts))
         print("⚖️ Class weights:", class_weights)
+
     else:
-        # Binary classification case
-        num_classes = 1 if loss_name in ["BCEWithLogitsLoss"] else 2
+        # Cas binaire par défaut
+        num_classes = 1
         metrics = ['accuracy']
-        loss_fn = get_loss_function(loss_name)
+        loss_fn = losses.BinaryCrossentropy()
         class_weights = None
 
     model = get_model(model_type, input_shape, num_classes, num_layers=num_layers)
     optimizer = get_optimizer(optimizer_name, learning_rate)
-    
     model.compile(optimizer=optimizer, loss=loss_fn, metrics=metrics)
 
     reduce_lr = callbacks.ReduceLROnPlateau(monitor='val_loss', patience=3, factor=0.5)
     early_stop = callbacks.EarlyStopping(monitor='val_loss', patience=100, restore_best_weights=True)
-    y_train_ = y_train.astype(np.float32) if num_classes == 1 else y_train
-    y_val_ = y_val.astype(np.float32) if num_classes == 1 else y_val
-    y_test_ = y_test.astype(np.float32) if num_classes == 1 else y_test
+
+    # Préparation des labels pour le fit
+    if num_classes == 1:
+        y_train_ = y_train.astype(np.float32)
+        y_val_ = y_val.astype(np.float32)
+        y_test_ = y_test.astype(np.float32)
+    else:
+        y_train_ = y_train
+        y_val_ = y_val
+        y_test_ = y_test
     # 🛑 Check for stop signal before launching training
     if stop_flag_getter is not None and stop_flag_getter():
         print("🛑 Training stopped by user.")
@@ -583,20 +637,27 @@ def train_model(X_train, X_val, X_test, y_train, y_val, y_test,
     if num_classes == 1:
         test_preds = (test_predictions > 0.5).astype(int).flatten()
     else:
-        # For multi-class, always use argmax
         test_preds = np.argmax(test_predictions, axis=1)
 
-    test_acc = accuracy_score(y_test, test_preds)
-    test_report = classification_report(y_test, test_preds, zero_division=0)
-    
+    # --- Correction : convertit y_test one-hot en entiers si besoin ---
+    if y_test.ndim > 1 and y_test.shape[1] > 1:
+        y_test_eval = np.argmax(y_test, axis=1)
+    else:
+        y_test_eval = y_test
+
+    test_acc = accuracy_score(y_test_eval, test_preds)
+    test_report = classification_report(y_test_eval, test_preds, zero_division=0)
+        
     print("🔍 Classes uniques dans y_test:", np.unique(y_test))
     print("🔍 Classes uniques dans predictions:", np.unique(test_preds))
-
+    test_loss = model.evaluate(X_test, y_test_, verbose=0)  # Ajoute cette ligne
     test_results = {
         'accuracy': test_acc,
         'predictions': test_preds.tolist(),
         'true_labels': y_test.tolist(),
-        'report': test_report
+        'report': test_report,
+        'loss': test_loss if isinstance(test_loss, float) else test_loss[0],  # Ajoute la loss
+        'loss_function': loss_name  # Ajoute le nom de la loss
     }
 
     # Add time data if provided

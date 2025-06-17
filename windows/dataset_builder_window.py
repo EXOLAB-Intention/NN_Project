@@ -695,6 +695,18 @@ class DatasetBuilderWindow(QMainWindow):
                                 trial_data["label_int"] = label_data["label_int"]
                             except Exception as e:
                                 print(f"⚠️ Erreur génération de labels dans {trial} : {e}")
+                         # === AJOUTE CE BLOC POUR CHAQUE SIGNAL EMG COCHÉ ===
+                        from functions import process_emg_signal, normalize_emg  
+                        for key in list(trial_data.keys()):
+                            if key.startswith("emg"):
+                                emg = trial_data[key]
+                                try:
+                                    emg_filt = process_emg_signal(emg)
+                                    emg_norm = normalize_emg(emg_filt)
+                                    trial_data[key + "_filt"] = emg_filt
+                                    trial_data[key + "_norm"] = emg_norm
+                                except Exception as e:
+                                    print(f"⚠️ Erreur filtrage/normalisation {key} dans {trial}: {e}")
 
                         if trial_data:
                             filtered_data[trial] = trial_data

@@ -1,0 +1,11 @@
+Dataset Creation Date: 2025-06-17 10:36:56
+
+Selected Inputs:
+- imu3
+- imu4
+
+Selected Outputs:
+- button_ok
+
+Filtered Files:
+- datasets\dataset18\filtered_all.h5

@@ -1,0 +1,10 @@
+Dataset Creation Date: 2025-06-17 10:39:10
+
+Selected Inputs:
+- imu3
+
+Selected Outputs:
+- button_ok
+
+Filtered Files:
+- datasets\dataset19\filtered_cropped_20250520_214656.h5

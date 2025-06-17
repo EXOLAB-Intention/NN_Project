@@ -482,105 +482,88 @@ class NeuralNetworkEvaluator(QMainWindow):
         # === Data
         y_true = np.array(self.test_results.get("y_true", []))
         y_pred = np.array(self.test_results.get("y_pred", []))
-
-        # === Metrics
-        if len(y_true) > 0 and len(y_pred) > 0:
-            try:
-                acc = accuracy_score(y_true, y_pred)
-            except:
-                acc = 0.0
-            try:
-                mse = mean_squared_error(y_true, y_pred)
-                rmse = np.sqrt(mse)
-            except:
-                mse = rmse = 0.0
+        # Ajout : récupérer le type de tâche
+        loss_function = self.test_results.get("loss_function", None)
+        # Si pas dans test_results, essayer dans self.state
+        if not loss_function and hasattr(self, "state"):
+            loss_function = self.state.get("loss_function", None)
+        # Déterminer le type de tâche
+        classification_losses = ["CrossEntropyLoss", "BCEWithLogitsLoss"]
+        regression_losses = ["MSELoss", "SmoothL1Loss", "HuberLoss"]
+        if loss_function in classification_losses:
+            task_type = "classification"
+        elif loss_function in regression_losses:
+            task_type = "regression"
         else:
-            acc = mse = rmse = 0.0
+            # fallback: heuristique
+            task_type = "classification" if len(np.unique(y_true)) < 10 else "regression"
 
-        # === Classification Section (moved left 50px)
-        classification_label = QLabel("<b><i>Classification</i></b>")
-        classification_label.setAlignment(Qt.AlignLeft)
-        classification_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
-        classification_label.setContentsMargins(-50, 0, 0, 0)  
-        classification_label.setStyleSheet("font-size: 17px;")  
-        main_grid.addWidget(classification_label, 0, 0, 1, 1)
+        # === Affichage selon le type de tâche
+        if task_type == "classification":
+            # === Classification Section
+            classification_label = QLabel("<b><i>Classification</i></b>")
+            classification_label.setAlignment(Qt.AlignLeft)
+            classification_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            classification_label.setContentsMargins(-50, 0, 0, 0)  
+            classification_label.setStyleSheet("font-size: 17px;")  
+            main_grid.addWidget(classification_label, 0, 0, 1, 1)
 
-        # Accuracy row - using a single cell with horizontal layout
-        accuracy_layout = QHBoxLayout()
-        accuracy_layout.setSpacing(20)  # Increased spacing between label and value box
-        accuracy_layout.setContentsMargins(50, 0, 0, 0)  # Align with other metrics
-    
-        accuracy_label = QLabel("<b><i>Accuracy:</i></b>")
-        accuracy_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        accuracy_value = QLabel(f"{acc*100:.2f} %")
-        accuracy_value.setStyleSheet("border: 1px solid gray; padding: 2px; background-color: white;")
-        accuracy_value.setFixedSize(80, 25)  
-    
-        accuracy_layout.addWidget(accuracy_label)
-        accuracy_layout.addWidget(accuracy_value)
-        accuracy_layout.addStretch()  
-        main_grid.addLayout(accuracy_layout, 1, 0)
-        
-        # Put label and value in same cell with horizontal layout
-        accuracy_layout = QHBoxLayout()
-        accuracy_layout.addWidget(accuracy_label)
-        accuracy_layout.addWidget(accuracy_value)
-        accuracy_layout.setSpacing(5)
-        accuracy_layout.setContentsMargins(50, 0, 0, 0)  
-        main_grid.addLayout(accuracy_layout, 1, 0, 1, 2)
+            # Accuracy row
+            accuracy_layout = QHBoxLayout()
+            accuracy_layout.setSpacing(20)
+            accuracy_layout.setContentsMargins(50, 0, 0, 0)
+            accuracy_label = QLabel("<b><i>Accuracy:</i></b>")
+            accuracy_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            # Récupérer l'accuracy depuis test_results
+            acc = self.test_results.get("accuracy", 0.0)  # Valeur par défaut 0.0 si non trouvée
+            accuracy_value = QLabel(f"{acc*100:.2f} %")
+            accuracy_value.setStyleSheet("border: 1px solid gray; padding: 2px; background-color: white;")
+            accuracy_value.setFixedSize(80, 25)  
+            accuracy_layout.addWidget(accuracy_label)
+            accuracy_layout.addWidget(accuracy_value)
+            accuracy_layout.addStretch()  
+            main_grid.addLayout(accuracy_layout, 1, 0, 1, 2)
 
-        # Confusion Matrix row
-        confusion_matrix_label = QLabel("<b><i>Confusion matrix</i></b>")
-        confusion_matrix_label.setAlignment(Qt.AlignLeft)
-        confusion_matrix_label.setContentsMargins(50, 0, 0, 0)  
-        main_grid.addWidget(confusion_matrix_label, 2, 0, 1, 2)
+            # Confusion Matrix row
+            confusion_matrix_label = QLabel("<b><i>Confusion matrix</i></b>")
+            confusion_matrix_label.setAlignment(Qt.AlignLeft)
+            confusion_matrix_label.setContentsMargins(50, 0, 0, 0)  
+            main_grid.addWidget(confusion_matrix_label, 2, 0, 1, 2)
 
-        if len(y_true) > 0 and len(y_pred) > 0:
-            cm_canvas = self.plot_confusion_matrix(y_true, y_pred)
-            cm_canvas.setContentsMargins(50, 0, 0, 0)  
-            main_grid.addWidget(cm_canvas, 3, 0, 1, 2, alignment=Qt.AlignLeft)
-        else:
-            no_data_label = QLabel("Confusion matrix not available.")
-            no_data_label.setContentsMargins(50, 0, 0, 0)
-            main_grid.addWidget(no_data_label, 3, 0, 1, 2)
+            if len(y_true) > 0 and len(y_pred) > 0:
+                cm_canvas = self.plot_confusion_matrix(y_true, y_pred)
+                cm_canvas.setContentsMargins(50, 0, 0, 0)  
+                main_grid.addWidget(cm_canvas, 3, 0, 1, 2, alignment=Qt.AlignLeft)
+            else:
+                no_data_label = QLabel("Confusion matrix not available.")
+                no_data_label.setContentsMargins(50, 0, 0, 0)
+                main_grid.addWidget(no_data_label, 3, 0, 1, 2)
 
-        # === Regression Section (moved left 50px)
-        regression_label = QLabel("<b><i>Regression</b></i>")
-        regression_label.setAlignment(Qt.AlignLeft)
-        regression_label.setContentsMargins(-50, 0, 0, 0)  
-        regression_label.setStyleSheet("font-size: 17px;")  
-        main_grid.addWidget(regression_label, 4, 0, 1, 1)
+        elif task_type == "regression":
+            # Calculer la loss (celle utilisée à l'entraînement)
+            loss_value = self.test_results.get("loss", None)
+            if loss_value is None:
+                loss_value = 0.0
+            
+            # === Regression Section
+            regression_label = QLabel("<b><i>Regression</b></i>")
+            regression_label.setAlignment(Qt.AlignLeft)
+            regression_label.setContentsMargins(-50, 0, 0, 0)  
+            regression_label.setStyleSheet("font-size: 17px;")  
+            main_grid.addWidget(regression_label, 0, 0, 1, 1)
 
-        # MSE row
-        mse_layout = QHBoxLayout()
-        mse_layout.setSpacing(20)  # Increased spacing between label and value box
-        mse_layout.setContentsMargins(50, 0, 0, 0)
-    
-        mse_label = QLabel("<b><i>MSE:</i></b>")
-        mse_value = QLabel(f"{mse:.4f}")
-        mse_value.setStyleSheet("border: 1px solid gray; padding: 2px; background-color: white;")
-        mse_value.setFixedSize(80, 25)
-    
-        mse_layout.addWidget(mse_label)
-        mse_layout.addWidget(mse_value)
-        mse_layout.addStretch()
-        main_grid.addLayout(mse_layout, 5, 0)
-
-        # RMSE row
-        rmse_layout = QHBoxLayout()
-        rmse_layout.setSpacing(20)  # Increased spacing between label and value box
-        rmse_layout.setContentsMargins(50, 0, 0, 0)
-    
-        rmse_label = QLabel("<b><i>RMSE:</i></b>")
-        rmse_value = QLabel(f"{rmse:.4f}")
-        rmse_value.setStyleSheet("border: 1px solid gray; padding: 2px; background-color: white;")
-        rmse_value.setFixedSize(80, 25)
-    
-        rmse_layout.addWidget(rmse_label)
-        rmse_layout.addWidget(rmse_value)
-        rmse_layout.addStretch()
-        main_grid.addLayout(rmse_layout, 6, 0)
-
+            # Loss row
+            loss_layout = QHBoxLayout()
+            loss_layout.setSpacing(20)
+            loss_layout.setContentsMargins(50, 0, 0, 0)
+            loss_label = QLabel(f"<b><i>{loss_function or 'Loss'}:</i></b>")
+            loss_value_label = QLabel(f"{loss_value:.4f}")
+            loss_value_label.setStyleSheet("border: 1px solid gray; padding: 2px; background-color: white;")
+            loss_value_label.setFixedSize(80, 25)
+            loss_layout.addWidget(loss_label)
+            loss_layout.addWidget(loss_value_label)
+            loss_layout.addStretch()
+            main_grid.addLayout(loss_layout, 1, 0, 1, 2)
 
         # Add spacer with 0 height
         main_grid.addItem(QSpacerItem(20, 0, QSizePolicy.Minimum, QSizePolicy.Expanding), 7, 0, 1, 2)
@@ -721,8 +704,48 @@ class NeuralNetworkEvaluator(QMainWindow):
                 }
             """)
 
+            # ...dans create_model_section...
             accuracy_label = QLabel("Accuracy: N/A")
-            inputs_label = QLabel("Used Data: N/A")
+            used_data_button = QPushButton("View Used Data")
+            used_data_button.setEnabled(False)  # Désactivé par défaut
+            used_data_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #e7f3ff;
+                    border: 1px solid #a6c8ff;
+                    border-radius: 5px;
+                    padding: 8px 15px;
+                    font-size: 13px;
+                }
+                QPushButton:hover {
+                    background-color: #d0e7ff;
+                }
+                QPushButton:disabled {
+                    background-color: #f0f0f0;
+                    border-color: #ddd;
+                    color: #999;
+                }
+            """)
+            def show_used_data():
+                dialog = QDialog(self)
+                dialog.setWindowTitle("Used Data")
+                dialog.setFixedSize(400, 300)
+                layout = QVBoxLayout()
+                text = QTextBrowser()
+                # On mettra à jour le texte dans update_display
+                text.setText("No input data.")
+                layout.addWidget(text)
+                close_btn = QPushButton("Close")
+                close_btn.clicked.connect(dialog.accept)
+                button_layout = QHBoxLayout()
+                button_layout.addStretch()
+                button_layout.addWidget(close_btn)
+                button_layout.addStretch()
+                layout.addLayout(button_layout)
+                dialog.setLayout(layout)
+                dialog.exec_()
+            used_data_button.clicked.connect(show_used_data)
+
+
             params_button = QPushButton("View Hyperparameters")
             params_button.setEnabled(False)
             params_button.setStyleSheet("""
@@ -745,7 +768,7 @@ class NeuralNetworkEvaluator(QMainWindow):
 
             # Ajouter les widgets au layout AVANT la définition de show_params
             info_layout.addWidget(accuracy_label)
-            info_layout.addWidget(inputs_label)
+            info_layout.addWidget(used_data_button)
             info_layout.addWidget(params_button)
             info_widget.setLayout(info_layout)
 
@@ -828,9 +851,36 @@ class NeuralNetworkEvaluator(QMainWindow):
                 accuracy_label.setText(f"Accuracy: {accuracy:.2f}%")
                 
                 # Formatter les inputs pour l'affichage
-                input_text = ", ".join(inputs) if inputs else "No input data"
-                inputs_label.setText(f"Used Data: {input_text}")
-                
+                for i in range(info_layout.count()):
+                    widget = info_layout.itemAt(i).widget()
+                    if isinstance(widget, QPushButton) and widget.text() == "View Used Data":
+                        used_data_button = widget
+                        break
+
+                used_data_button.setEnabled(bool(inputs))
+                def show_used_data():
+                    dialog = QDialog(self)
+                    dialog.setWindowTitle("Used Data")
+                    dialog.setFixedSize(400, 300)
+                    layout = QVBoxLayout()
+                    text = QTextBrowser()
+                    if inputs:
+                        text.setText("\n".join(inputs))
+                    else:
+                        text.setText("No input data.")
+                    layout.addWidget(text)
+                    close_btn = QPushButton("Close")
+                    close_btn.clicked.connect(dialog.accept)
+                    button_layout = QHBoxLayout()
+                    button_layout.addStretch()
+                    button_layout.addWidget(close_btn)
+                    button_layout.addStretch()
+                    layout.addLayout(button_layout)
+                    dialog.setLayout(layout)
+                    dialog.exec_()
+                used_data_button.clicked.disconnect()
+                used_data_button.clicked.connect(show_used_data)
+
                 # Activer le bouton des hyperparamètres seulement si on a des données
                 has_params = bool(hyperparams and any(hyperparams.values()))
                 params_button.setEnabled(has_params)
@@ -939,8 +989,14 @@ class NeuralNetworkEvaluator(QMainWindow):
         ax = fig.add_subplot(111)  # Single plot
 
         # Get data and convert to numpy arrays 
-        ground_truth = np.array(self.test_results.get("y_true", []), dtype=int) 
-        predicted = np.array(self.test_results.get("y_pred", []), dtype=int)
+        ground_truth = np.array(self.test_results.get("y_true", []))
+        predicted = np.array(self.test_results.get("y_pred", []))
+
+        # --- Correction : si one-hot, convertir en entiers ---
+        if ground_truth.ndim > 1 and ground_truth.shape[1] > 1:
+            ground_truth = np.argmax(ground_truth, axis=1)
+        if predicted.ndim > 1 and predicted.shape[1] > 1:
+            predicted = np.argmax(predicted, axis=1)
 
         if len(ground_truth) > 0 and len(predicted) > 0:
             # Create time axis
@@ -972,50 +1028,40 @@ class NeuralNetworkEvaluator(QMainWindow):
     def get_saved_state(self):
         return self.state if hasattr(self, "state") else {}
 
-    def plot_prediction_vs_ground_truth(self, fig, ground_truth, predicted):
-        fig.clear()
-        axs = fig.subplots(nrows=1, ncols=2)
-
-        # 🟦 Courbe temporelle
-        axs[0].plot(ground_truth, label="Ground Truth", linewidth=1)
-        axs[0].plot(predicted, label="Prediction", linestyle="--", linewidth=1)
-        axs[0].set_title("Ground Truth vs Prediction")
-        axs[0].set_xlabel("Frame")
-        axs[0].set_ylabel("Forward Speed (m/s)")
-        axs[0].legend()
-        axs[0].grid(True)
-
-        # 🟫 Scatter plot
-        axs[1].scatter(ground_truth, predicted, alpha=0.6, s=10)
-        axs[1].plot([min(ground_truth), max(ground_truth)],
-                    [min(ground_truth), max(ground_truth)],
-                    'k--', linewidth=1)
-        axs[1].set_title("Predicted vs Ground Truth")
-        axs[1].set_xlabel("Ground Truth (m/s)")
-        axs[1].set_ylabel("Prediction (m/s)")
-        axs[1].grid(True)
-
-        fig.tight_layout()
-
     def prediction_scatter_plot_canvas(self, fig):
         """Plot scatter of predictions vs ground truth on a given figure"""
         import numpy as np
         from collections import Counter
-        
+
         # Get data
         y_true = np.array(progress_state.test_results.get("y_true", []))
         y_pred = np.array(progress_state.test_results.get("y_pred", []))
-        
+
+        # --- Correction : si one-hot, convertir en entiers ---
+        if y_true.ndim > 1 and y_true.shape[1] > 1:
+            y_true = np.argmax(y_true, axis=1)
+        if y_pred.ndim > 1 and y_pred.shape[1] > 1:
+            y_pred = np.argmax(y_pred, axis=1)
+
+        # --- Nettoyage : enlever les NaN ou valeurs invalides ---
+        min_len = min(len(y_true), len(y_pred))
+        y_true = y_true[:min_len]
+        y_pred = y_pred[:min_len]
+
         ax = fig.add_subplot(111)
 
-        if len(y_true) > 0 and len(y_pred) > 0:
+        if min_len > 0:
             jitter = 0.2
             y_true_plot = y_true + np.random.normal(0, jitter, size=y_true.shape)
             y_pred_plot = y_pred + np.random.normal(0, jitter, size=y_pred.shape)
             sizes = 30
             point_color = "royalblue"
 
-            # Scatter plot
+            # --- Sécurité finale ---
+            min_len_plot = min(len(y_true_plot), len(y_pred_plot))
+            y_true_plot = y_true_plot[:min_len_plot]
+            y_pred_plot = y_pred_plot[:min_len_plot]
+
             ax.scatter(y_true_plot, y_pred_plot, alpha=0.4, s=sizes, color="tab:blue")
 
             # Diagonal line
@@ -1041,7 +1087,6 @@ class NeuralNetworkEvaluator(QMainWindow):
             ax.set_ylabel("Predicted Phase (integer)")
             ax.set_title("Predicted vs Ground Truth (Scatter)")
             ax.grid(True)
-
         else:
             ax.text(0.5, 0.5, "No data available", ha="center", va="center")
             ax.set_axis_off()
@@ -1056,6 +1101,13 @@ class NeuralNetworkEvaluator(QMainWindow):
 
         fig = Figure(figsize=figsize)
         ax = fig.add_subplot(111)
+        import numpy as np
+
+        # Si y_true est one-hot, on le convertit en entiers
+        if isinstance(y_true, np.ndarray) and y_true.ndim > 1 and y_true.shape[1] > 1:
+            y_true = np.argmax(y_true, axis=1)
+        if isinstance(y_pred, np.ndarray) and y_pred.ndim > 1 and y_pred.shape[1] > 1:
+            y_pred = np.argmax(y_pred, axis=1)
         cm = confusion_matrix(y_true, y_pred, labels=list(int_to_phase.keys()))
         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=list(int_to_phase.values()))
         disp.plot(ax=ax, cmap='Blues', colorbar=True)
@@ -1072,9 +1124,15 @@ class NeuralNetworkEvaluator(QMainWindow):
         import numpy as np
 
         # Correction ici : forcer en array
-        y_true = np.array(self.test_results.get("true_labels", []), dtype=int)
-        y_pred = np.array(self.test_results.get("predictions", []), dtype=int)
+        y_true = np.array(self.test_results.get("true_labels", []))
+        y_pred = np.array(self.test_results.get("predictions", []))
         time = np.array(self.test_results.get("time", []))  # secondes
+
+        # --- Correction : si one-hot, convertir en entiers ---
+        if y_true.ndim > 1 and y_true.shape[1] > 1:
+            y_true = np.argmax(y_true, axis=1)
+        if y_pred.ndim > 1 and y_pred.shape[1] > 1:
+            y_pred = np.argmax(y_pred, axis=1)
 
         if len(y_true) == 0 or len(y_pred) == 0 or len(time) == 0:
             print("❌ Données incomplètes pour le graphe temporel.")
@@ -1106,4 +1164,3 @@ class NeuralNetworkEvaluator(QMainWindow):
 
         ax.xaxis.set_major_locator(ticker.MaxNLocator(nbins=10))
         fig.tight_layout()
-

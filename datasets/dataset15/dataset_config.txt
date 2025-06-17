@@ -1,0 +1,33 @@
+Dataset Creation Date: 2025-06-17 10:12:22
+
+Selected Inputs:
+- emgL2
+- emgR2
+- imu3
+- imu4
+
+Selected Outputs:
+- button_ok
+
+Filtered Files:
+- datasets\dataset15\filtered_45501.h5
+- datasets\dataset15\filtered_273820.h5
+- datasets\dataset15\filtered_322660.h5
+- datasets\dataset15\filtered_394500.h5
+- datasets\dataset15\filtered_451430.h5
+- datasets\dataset15\filtered_473130.h5
+- datasets\dataset15\filtered_487701.h5
+- datasets\dataset15\filtered_500670.h5
+- datasets\dataset15\filtered_520870.h5
+- datasets\dataset15\filtered_544800.h5
+- datasets\dataset15\filtered_564100.h5
+- datasets\dataset15\filtered_590440.h5
+- datasets\dataset15\filtered_606370.h5
+- datasets\dataset15\filtered_630660.h5
+- datasets\dataset15\filtered_671650.h5
+- datasets\dataset15\filtered_708570.h5
+- datasets\dataset15\filtered_957401.h5
+- datasets\dataset15\filtered_1646801.h5
+- datasets\dataset15\filtered_1805301.h5
+- datasets\dataset15\filtered_2242601.h5
+- datasets\dataset15\filtered_2461101.h5

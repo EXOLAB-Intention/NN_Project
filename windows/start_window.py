@@ -438,11 +438,7 @@ class StartWindow(QMainWindow):
                         from matplotlib.figure import Figure
                         pred_fig = Figure(figsize=(8, 6))
                         scatter_fig = Figure(figsize=(8, 6))
-                        nn_evaluator.plot_prediction_vs_ground_truth(
-                            fig=pred_fig,
-                            ground_truth=true_labels,
-                            predicted=predicted_labels
-                        )
+                        nn_evaluator.plot_prediction_and_curves(pred_fig) 
                         nn_evaluator.prediction_scatter_plot_canvas(scatter_fig)
                         nn_evaluator.plot_confusion_matrix(true_labels, predicted_labels)
 

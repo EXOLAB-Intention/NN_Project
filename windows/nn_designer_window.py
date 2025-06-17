@@ -141,7 +141,9 @@ class NeuralNetworkDesignerWindow(QMainWindow):
 
     def restore_state(self):
         """Restore all UI elements from self.state."""
+        # Restore the optimizer selection from the saved state, defaulting to "Adam" if not set
         self.optimizer_combo.setCurrentText(self.state.get("optimizer", "Adam"))
+        # Restore the classification loss function from the saved state, defaulting to "CrossEntropyLoss" if not set
         self.classification_loss_combo.setCurrentText(self.state.get("loss_function", "CrossEntropyLoss"))
         self.regression_loss_combo.setCurrentIndex(-1)  # Ensure regression loss is not selected by default
 
@@ -275,7 +277,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                     border: none;
                 }
             """
-            
+            # Create a dropdown menu for selecting the activation function of the layer
             if label == "Activation":
                 input_widget = QComboBox()
                 input_widget.addItems(["tanh", "relu", "gelu", "sigmoid", "linear", "softmax"])
@@ -310,6 +312,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                 param_layout.itemAt(i).widget().setParent(None)
             param_widgets.clear()
 
+            # Create input fields for layer-specific parameters based on the selected layer type
             if layer_type in ["LSTM", "GRU", "RNN"]:
                 create_param_input("Units", config.get("units", 64) if config else 64)
                 create_param_input("Dropout", config.get("dropout", 0.3) if config else 0.3)
@@ -446,13 +449,20 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             "epoch_number": self.epoch_number_input.text(),
             "learning_rate": self.learning_rate_combo.currentText()
         }
+
+        # Save the selected optimizer from the combo box into the state dictionary
         self.state["optimizer"] = self.optimizer_combo.currentText()
+        # Save the selected loss function based on the task type
         if self.classification_loss_combo.currentIndex() >= 0:
+            # If a classification loss is selected, save it as the current loss function
             self.state["loss_function"] = self.classification_loss_combo.currentText()
         elif self.regression_loss_combo.currentIndex() >= 0:
+            # If a regression loss is selected, save it as the current loss function
             self.state["loss_function"] = self.regression_loss_combo.currentText()
         else:
+            # If no loss function is selected, set the value to None
             self.state["loss_function"] = None
+
         # Sauvegarde les chemins relatifs cochés
         self.state["selected_files"] = [
             self.file_list.item(i).data(Qt.UserRole)
@@ -810,9 +820,13 @@ class NeuralNetworkDesignerWindow(QMainWindow):
         for loss in self.loss_function_categories["Regression"]:
             self.regression_loss_combo.addItem(loss)
 
+        # When the user selects a loss function for classification,
+        # automatically reset the regression loss combo box (to ensure mutual exclusivity)
         self.classification_loss_combo.currentIndexChanged.connect(
             lambda i: self.regression_loss_combo.setCurrentIndex(-1) if i != -1 else None
         )
+        # When the user selects a loss function for regression,
+        # automatically reset the classification loss combo box (to ensure mutual exclusivity)
         self.regression_loss_combo.currentIndexChanged.connect(
             lambda i: self.classification_loss_combo.setCurrentIndex(-1) if i != -1 else None
         )
@@ -878,20 +892,24 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                 background-color: #fff;
             }
         """
-
+        
+        # Initialize QLineEdit widgets with default values for each hyperparameter
         self.sequence_length_input = QLineEdit("50")
         self.stride_input = QLineEdit("5")
         self.batch_size_input = QLineEdit("32")
         self.epoch_number_input = QLineEdit("10")
 
+        # Set up the QComboBox for learning rate selection with default and available values
         self.learning_rate_combo = QComboBox()
         self.learning_rate_combo.addItems(["0.01", "0.001", "0.0001", "0.00001"])
         self.learning_rate_combo.setCurrentText("0.001")
         self.learning_rate_combo.setStyleSheet(combo_style)
 
+        # Apply the input style to all QLineEdit widgets
         for widget in [self.sequence_length_input, self.stride_input, self.batch_size_input, self.epoch_number_input]:
             widget.setStyleSheet(input_style)
 
+        # Define a list of (label, widget) pairs for each hyperparameter field
         fields = [
             ("Sequence Length", self.sequence_length_input),
             ("Stride", self.stride_input),
@@ -900,6 +918,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             ("Learning Rate", self.learning_rate_combo)
         ]
 
+        # Dynamically add each label and input widget to the layout in separate rows
         for row, (label_text, input_widget) in enumerate(fields):
             lbl = QLabel(label_text)
             lbl.setStyleSheet(label_style)
@@ -907,6 +926,7 @@ class NeuralNetworkDesignerWindow(QMainWindow):
             hyper_layout.addWidget(lbl, row, 0)
             hyper_layout.addWidget(input_widget, row, 1)
 
+        # Set the layout for the hyperparameter box and add it to the main layout
         hyper_box.setLayout(hyper_layout)
         middle_layout.addWidget(hyper_box)
 
@@ -1420,12 +1440,11 @@ class NeuralNetworkDesignerWindow(QMainWindow):
                 self.state["training_started"] = True
 
                 # Save test results
-                if test_results and "true_labels" in test_results and "predictions" in test_results:
-                    progress_state.test_results["y_true"] = test_results["true_labels"]
-                    progress_state.test_results["y_pred"] = test_results["predictions"]
-                else:
-                    progress_state.test_results["y_true"] = []
-                    progress_state.test_results["y_pred"] = []
+                if test_results:
+                    progress_state.test_results["y_true"] = test_results.get("true_labels", [])
+                    progress_state.test_results["y_pred"] = test_results.get("predictions", [])
+                    progress_state.test_results["loss"] = test_results.get("loss", None)
+                    progress_state.test_results["loss_function"] = test_results.get("loss_function", None)
 
                 # Show completion message
                 QMessageBox.information(self, "Training Complete", 

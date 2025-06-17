@@ -1,0 +1,11 @@
+Dataset Creation Date: 2025-06-17 10:45:55
+
+Selected Inputs:
+- emgL2
+- imu3
+
+Selected Outputs:
+- button_ok
+
+Filtered Files:
+- datasets\dataset21\filtered_cropped_20250520_214656.h5

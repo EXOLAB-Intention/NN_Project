@@ -106,5 +106,5 @@ def read_h5_content(file_path):
 
 if __name__ == '__main__':
     # Remplace 'path/to/your/file.h5' par le chemin réel de ton fichier H5
-    file_path = r'C:\Users\harry\OneDrive - UPEC\Documents\BUT2\Stage\KAIST\NN Package\NN_Project\datasets\dataset3\filtered_cropped_20250520_214656.h5'
+    file_path = r'C:\Users\harry\OneDrive - UPEC\Documents\BUT2\Stage\KAIST\NN Package\NN_Project\data10\cropped_20250520_214656.h5'
     read_h5_content(file_path)
